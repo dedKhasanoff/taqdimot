@@ -7,8 +7,8 @@ create table if not exists public.admins (
 );
 alter table public.admins enable row level security;
 
-drop policy if exists "admin o'zini ko'radi" on public.admins;
-create policy "admin o'zini ko'radi" on public.admins
+drop policy if exists "admins_select_own" on public.admins;
+create policy "admins_select_own" on public.admins
   for select to authenticated using (user_id = auth.uid());
 
 create or replace function public.is_admin()
@@ -29,20 +29,20 @@ create table if not exists public.presentations (
 create index if not exists presentations_created_at_idx on public.presentations (created_at desc);
 alter table public.presentations enable row level security;
 
-drop policy if exists "hamma ko'radi" on public.presentations;
-create policy "hamma ko'radi" on public.presentations
+drop policy if exists "pres_select_all" on public.presentations;
+create policy "pres_select_all" on public.presentations
   for select to anon, authenticated using (true);
 
-drop policy if exists "admin qo'shadi" on public.presentations;
-create policy "admin qo'shadi" on public.presentations
+drop policy if exists "pres_insert_admin" on public.presentations;
+create policy "pres_insert_admin" on public.presentations
   for insert to authenticated with check (public.is_admin());
 
-drop policy if exists "admin o'zgartiradi" on public.presentations;
-create policy "admin o'zgartiradi" on public.presentations
+drop policy if exists "pres_update_admin" on public.presentations;
+create policy "pres_update_admin" on public.presentations
   for update to authenticated using (public.is_admin()) with check (public.is_admin());
 
-drop policy if exists "admin o'chiradi" on public.presentations;
-create policy "admin o'chiradi" on public.presentations
+drop policy if exists "pres_delete_admin" on public.presentations;
+create policy "pres_delete_admin" on public.presentations
   for delete to authenticated using (public.is_admin());
 
 -- 3. Fayl ombori: ochiq o'qish, 20 MB, faqat PDF va PPTX
@@ -54,18 +54,18 @@ on conflict (id) do update set
   file_size_limit = excluded.file_size_limit,
   allowed_mime_types = excluded.allowed_mime_types;
 
-drop policy if exists "taqdimotlar: admin yuklaydi" on storage.objects;
-create policy "taqdimotlar: admin yuklaydi" on storage.objects
+drop policy if exists "files_insert_admin" on storage.objects;
+create policy "files_insert_admin" on storage.objects
   for insert to authenticated with check (bucket_id = 'taqdimotlar' and public.is_admin());
 
-drop policy if exists "taqdimotlar: admin o'chiradi" on storage.objects;
-create policy "taqdimotlar: admin o'chiradi" on storage.objects
+drop policy if exists "files_delete_admin" on storage.objects;
+create policy "files_delete_admin" on storage.objects
   for delete to authenticated using (bucket_id = 'taqdimotlar' and public.is_admin());
 
 -- Ochiq bucket fayllarni public URL orqali beradi, shuning uchun select qoidasi kerak emas.
 -- Lekin o'chirishda Supabase avval qatorni o'qiydi, shuning uchun admin uchun select ham kerak:
-drop policy if exists "taqdimotlar: admin o'qiydi" on storage.objects;
-create policy "taqdimotlar: admin o'qiydi" on storage.objects
+drop policy if exists "files_select_admin" on storage.objects;
+create policy "files_select_admin" on storage.objects
   for select to authenticated using (bucket_id = 'taqdimotlar' and public.is_admin());
 
 -- 4. O'zingizni admin qilish (Authentication → Users'da foydalanuvchi yaratgandan keyin):
