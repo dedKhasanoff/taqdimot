@@ -35,8 +35,8 @@ const OFFICE_LIMIT = 10 * 1048576; // Office web viewer opens PowerPoint files u
 const viewHash = (p, kind) => '#korish/' + p.id + '/' + kind;
 const officeUrl = url => 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(url);
 // Phones often can't show a PDF inside a frame; Google's viewer can.
-const pdfUrl = url => navigator.pdfViewerEnabled === false
-  ? 'https://docs.google.com/gview?embedded=1&url=' + encodeURIComponent(url) : url;
+const googleUrl = url => 'https://docs.google.com/gview?embedded=1&url=' + encodeURIComponent(url);
+const pdfUrl = url => navigator.pdfViewerEnabled === false ? googleUrl(url) : url;
 
 function fileLinks(p){
   const files = (p.files || []).slice().sort((a, b) => a.kind === 'pptx' ? -1 : b.kind === 'pptx' ? 1 : 0);
@@ -154,8 +154,10 @@ function viewer(id, kind){
   if(viewKey === key && document.getElementById('viewer')) return; // keep the frame, don't reload slides
   viewKey = key;
   const url = publicUrl(f.path);
-  const tooBig = f.kind === 'pptx' && f.size > OFFICE_LIMIT;
-  const src = f.kind === 'pptx' ? officeUrl(url) : pdfUrl(url);
+  // Big PowerPoint files go to Google's viewer, which takes up to ~25 MB
+  const big = f.kind === 'pptx' && f.size > OFFICE_LIMIT;
+  const src = f.kind === 'pdf' ? pdfUrl(url) : big ? googleUrl(url) : officeUrl(url);
+  const hasPdf = (p.files || []).some(x => x.kind === 'pdf');
   const tabs = (p.files || []).length > 1 ? (p.files || []).slice().sort((a, b) => a.kind === 'pptx' ? -1 : 1).map(x =>
     `<a class="btn${x.kind === f.kind ? '' : ' ghost'}" href="${viewHash(p, x.kind)}">${x.kind === 'pptx' ? 'Slaydlar' : 'PDF'}</a>`).join('') : '';
   app.innerHTML = `
@@ -166,7 +168,7 @@ function viewer(id, kind){
       <button class="btn ghost" type="button" id="fs">To'liq ekran</button>
       <a class="btn ghost" href="${esc(publicUrl(f.path, f.name))}">Yuklab olish (${f.kind.toUpperCase()}${f.size ? ', ' + mb(f.size) : ''})</a>
     </div>
-    ${tooBig ? `<p class="note">Fayl 10 MB dan katta, shuning uchun slaydlar bu yerda ochilmasligi mumkin. Unda "Yuklab olish" tugmasidan foydalaning.</p>` : ''}
+    ${big ? `<p class="note">Fayl katta (${mb(f.size)}), shuning uchun slaydlar Google orqali ochiladi va biroz sekin yuklanishi mumkin. Ochilmasa${hasPdf ? ' "PDF" tugmasini bosing yoki' : ''} "Yuklab olish" tugmasidan foydalaning.</p>` : ''}
     <div class="frame"><iframe id="viewer" src="${esc(src)}" title="${esc(p.title)}" allowfullscreen></iframe></div>`;
   document.getElementById('fs').addEventListener('click', () => {
     const el = document.querySelector('.frame');
