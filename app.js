@@ -98,12 +98,13 @@ async function uploadCover(g, blob){
   return path;
 }
 
+// PDF goes first: the site draws it itself, sharp on any screen. PPTX uses Microsoft's viewer.
+const sortedFiles = p => (p.files || []).slice().sort((a, b) => a.kind === 'pdf' ? -1 : b.kind === 'pdf' ? 1 : 0);
 function fileLinks(p){
-  const files = (p.files || []).slice().sort((a, b) => a.kind === 'pptx' ? -1 : b.kind === 'pptx' ? 1 : 0);
-  return files.map((f, i) => `<a class="btn${i ? ' ghost' : ''}" href="${viewHash(p, f.kind)}">${f.kind === 'pptx' ? 'Slaydlarni ko\'rish' : 'PDF ko\'rish'}</a>`).join('');
+  return sortedFiles(p).map((f, i) => `<a class="btn${i ? ' ghost' : ''}" href="${viewHash(p, f.kind)}">${i ? 'PowerPoint ko\'rinishi' : 'Slaydlarni ko\'rish'}</a>`).join('');
 }
 function presCard(p, showGroup){
-  const first = (p.files || []).find(f => f.kind === 'pptx') || (p.files || [])[0];
+  const first = sortedFiles(p)[0];
   const thumb = p.cover
     ? `<img src="${esc(publicUrl(p.cover))}" alt="" loading="lazy">`
     : `<span class="ph"><b>${esc(p.group)}</b>${first ? first.kind.toUpperCase() : ''}</span>`;
@@ -225,10 +226,18 @@ function viewer(id, kind){
   const url = publicUrl(f.path);
   // Big PowerPoint files go to Google's viewer, which takes up to ~25 MB
   const big = f.kind === 'pptx' && f.size > OFFICE_LIMIT;
-  const src = f.kind === 'pdf' ? pdfUrl(url) : big ? googleUrl(url) : officeUrl(url);
+  const src = big ? googleUrl(url) : officeUrl(url);
   const hasPdf = (p.files || []).some(x => x.kind === 'pdf');
-  const tabs = (p.files || []).length > 1 ? (p.files || []).slice().sort((a, b) => a.kind === 'pptx' ? -1 : 1).map(x =>
-    `<a class="btn${x.kind === f.kind ? '' : ' ghost'}" href="${viewHash(p, x.kind)}">${x.kind === 'pptx' ? 'Slaydlar' : 'PDF'}</a>`).join('') : '';
+  const tabs = (p.files || []).length > 1 ? sortedFiles(p).map(x =>
+    `<a class="btn${x.kind === f.kind ? '' : ' ghost'}" href="${viewHash(p, x.kind)}">${x.kind === 'pdf' ? 'Slaydlar' : 'PowerPoint'}</a>`).join('') : '';
+  const stage = f.kind === 'pdf'
+    ? `<div class="frame deck loading" id="viewer" tabindex="0" aria-label="${esc(p.title)}">
+        <canvas id="slide"></canvas>
+        <button class="nav prev" type="button" aria-label="Oldingi slayd">‹</button>
+        <button class="nav next" type="button" aria-label="Keyingi slayd">›</button>
+        <span class="counter" id="counter"></span>
+      </div>`
+    : `<div class="frame"><iframe id="viewer" src="${esc(src)}" title="${esc(p.title)}" allowfullscreen></iframe></div>`;
   app.innerHTML = `
     <a class="back" href="#guruh-${esc(p.group)}">← ${esc(p.group)}-guruh</a>
     <h1 style="margin-top:20px">${esc(p.title)}</h1>
@@ -237,13 +246,86 @@ function viewer(id, kind){
       <button class="btn ghost" type="button" id="fs">To'liq ekran</button>
       <a class="btn ghost" href="${esc(publicUrl(f.path, f.name))}">Yuklab olish (${f.kind.toUpperCase()}${f.size ? ', ' + mb(f.size) : ''})</a>
     </div>
-    ${big ? `<p class="note">Fayl katta (${mb(f.size)}), shuning uchun slaydlar Google orqali ochiladi va biroz sekin yuklanishi mumkin. Ochilmasa${hasPdf ? ' "PDF" tugmasini bosing yoki' : ''} "Yuklab olish" tugmasidan foydalaning.</p>` : ''}
-    <div class="frame"><iframe id="viewer" src="${esc(src)}" title="${esc(p.title)}" allowfullscreen></iframe></div>`;
+    ${big ? `<p class="note">Fayl katta (${mb(f.size)}), shuning uchun slaydlar Google orqali ochiladi va biroz sekin yuklanishi mumkin. Ochilmasa${hasPdf ? ' "Slaydlar" tugmasini bosing yoki' : ''} "Yuklab olish" tugmasidan foydalaning.</p>` : ''}
+    ${f.kind === 'pptx' && !hasPdf ? `<p class="note">Telefonda slaydlar tiniqroq ko'rinishi uchun taqdimotning PDF nusxasini ham yuklang.</p>` : ''}
+    ${stage}`;
   document.getElementById('fs').addEventListener('click', () => {
     const el = document.querySelector('.frame');
     (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
   });
+  deck = null;
+  if(f.kind === 'pdf') openDeck(url, key);
 }
+
+/* ---- Own slide viewer for PDF: renders each page at the screen's real pixel density ---- */
+let deck = null; // {pdf, n, page, key, task}
+async function openDeck(url, key){
+  const stage = document.getElementById('viewer');
+  stage.querySelector('.prev').addEventListener('click', e => { e.stopPropagation(); go(-1); });
+  stage.querySelector('.next').addEventListener('click', e => { e.stopPropagation(); go(1); });
+  let x0 = null;
+  stage.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; }, {passive: true});
+  stage.addEventListener('touchend', e => {
+    if(x0 == null) return;
+    const dx = e.changedTouches[0].clientX - x0; x0 = null;
+    if(Math.abs(dx) > 40) go(dx < 0 ? 1 : -1);
+  });
+  try{
+    await loadScript(LIBS.pdfjs);
+    pdfjsLib.GlobalWorkerOptions.workerSrc = LIBS.pdfWorker;
+    const pdf = await pdfjsLib.getDocument(url).promise;
+    if(viewKey !== key) return;
+    const first = (await pdf.getPage(1)).getViewport({scale: 1});
+    stage.style.aspectRatio = first.width + ' / ' + first.height;
+    deck = {pdf, n: pdf.numPages, page: 1, key, task: null};
+    await drawSlide();
+  }catch(e){
+    console.error(e);
+    if(viewKey === key) stage.outerHTML = `<p class="note">Slaydlarni ochib bo'lmadi. "Yuklab olish" tugmasidan foydalaning.</p>`;
+  }
+}
+async function drawSlide(){
+  const stage = document.getElementById('viewer'), canvas = document.getElementById('slide');
+  if(!deck || !stage || !canvas) return;
+  const d = deck, num = d.page;
+  const page = await d.pdf.getPage(num);
+  const base = page.getViewport({scale: 1});
+  const box = stage.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const fit = Math.min(box.width / base.width, box.height / base.height);
+  const vp = page.getViewport({scale: fit * dpr});
+  if(d.task) d.task.cancel();
+  const off = document.createElement('canvas');
+  off.width = Math.floor(vp.width); off.height = Math.floor(vp.height);
+  const ctx = off.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, off.width, off.height);
+  d.task = page.render({canvasContext: ctx, viewport: vp});
+  try{ await d.task.promise; }catch(_){ return; } // cancelled by a newer draw
+  if(deck !== d || d.page !== num) return;
+  canvas.width = off.width; canvas.height = off.height;
+  canvas.getContext('2d').drawImage(off, 0, 0);
+  canvas.style.width = off.width / dpr + 'px'; canvas.style.height = off.height / dpr + 'px';
+  stage.classList.remove('loading');
+  document.getElementById('counter').textContent = num + ' / ' + d.n;
+  stage.querySelector('.prev').disabled = num <= 1;
+  stage.querySelector('.next').disabled = num >= d.n;
+  // warm up the next page so swiping feels instant
+  if(num < d.n) d.pdf.getPage(num + 1).catch(() => {});
+}
+function go(step){
+  if(!deck) return;
+  const n = Math.min(deck.n, Math.max(1, deck.page + step));
+  if(n !== deck.page){ deck.page = n; drawSlide(); }
+}
+document.addEventListener('keydown', e => {
+  if(!deck || e.target.closest && e.target.closest('input, textarea')) return;
+  if(e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' '){ e.preventDefault(); go(1); }
+  if(e.key === 'ArrowLeft' || e.key === 'PageUp'){ e.preventDefault(); go(-1); }
+});
+let resizeT = null;
+const redraw = () => { clearTimeout(resizeT); resizeT = setTimeout(drawSlide, 150); };
+window.addEventListener('resize', redraw);
+document.addEventListener('fullscreenchange', redraw);
 function currentView(){
   const m = location.hash.match(/^#korish\/([\w-]+)\/(pdf|pptx)$/);
   return m ? {id: m[1], kind: m[2]} : null;
@@ -257,7 +339,7 @@ function route(){
   if(location.hash === '#kirish'){ q.value = ''; viewKey = null; return login(); }
   const v = currentView();
   if(v){ q.value = ''; return viewer(v.id, v.kind); }
-  viewKey = null;
+  viewKey = null; deck = null;
   const g = currentGroup();
   if(g){ q.value = ''; group(g); } else home();
 }
