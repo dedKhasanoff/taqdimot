@@ -24,8 +24,10 @@ create table if not exists public.presentations (
   student text not null check (char_length(student) between 1 and 120),
   -- [{kind: "pdf"|"pptx", path, name, size}]
   files jsonb not null default '[]'::jsonb check (jsonb_typeof(files) = 'array' and jsonb_array_length(files) between 1 and 2),
+  cover text, -- birinchi slayd rasmi (storage yo'li)
   created_at timestamptz not null default now()
 );
+alter table public.presentations add column if not exists cover text;
 create index if not exists presentations_created_at_idx on public.presentations (created_at desc);
 alter table public.presentations enable row level security;
 
@@ -45,10 +47,10 @@ drop policy if exists "pres_delete_admin" on public.presentations;
 create policy "pres_delete_admin" on public.presentations
   for delete to authenticated using (public.is_admin());
 
--- 3. Fayl ombori: ochiq o'qish, 20 MB, faqat PDF va PPTX
+-- 3. Fayl ombori: ochiq o'qish, 20 MB, PDF, PPTX va muqova rasmlari
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('taqdimotlar', 'taqdimotlar', true, 20971520,
-        array['application/pdf','application/vnd.openxmlformats-officedocument.presentationml.presentation'])
+        array['application/pdf','application/vnd.openxmlformats-officedocument.presentationml.presentation','image/jpeg'])
 on conflict (id) do update set
   public = excluded.public,
   file_size_limit = excluded.file_size_limit,

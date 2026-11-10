@@ -38,16 +38,84 @@ const officeUrl = url => 'https://view.officeapps.live.com/op/embed.aspx?src=' +
 const googleUrl = url => 'https://docs.google.com/gview?embedded=1&url=' + encodeURIComponent(url);
 const pdfUrl = url => navigator.pdfViewerEnabled === false ? googleUrl(url) : url;
 
+/* ---- Cover images (first slide) ---- */
+const COVER_W = 960;
+const LIBS = {
+  jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+  pdfjs: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+  pdfWorker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+};
+const loaded = {};
+function loadScript(src){
+  return loaded[src] || (loaded[src] = new Promise((res, rej) => {
+    const el = document.createElement('script');
+    el.src = src; el.onload = res; el.onerror = () => { delete loaded[src]; rej(new Error('Kutubxona yuklanmadi')); };
+    document.head.appendChild(el);
+  }));
+}
+const canvasToJpeg = c => new Promise(res => c.toBlob(res, 'image/jpeg', 0.85));
+async function imageToJpeg(blob){
+  const img = await createImageBitmap(blob);
+  const k = Math.min(1, COVER_W / img.width);
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return canvasToJpeg(c);
+}
+async function coverFromPdf(blob){
+  await loadScript(LIBS.pdfjs);
+  pdfjsLib.GlobalWorkerOptions.workerSrc = LIBS.pdfWorker;
+  const pdf = await pdfjsLib.getDocument({data: await blob.arrayBuffer()}).promise;
+  const page = await pdf.getPage(1);
+  const vp = page.getViewport({scale: COVER_W / page.getViewport({scale: 1}).width});
+  const c = document.createElement('canvas');
+  c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  await page.render({canvasContext: ctx, viewport: vp}).promise;
+  return canvasToJpeg(c);
+}
+// PowerPoint stores a small picture of the first slide inside the .pptx
+async function coverFromPptx(blob){
+  await loadScript(LIBS.jszip);
+  const zip = await JSZip.loadAsync(blob);
+  const f = zip.file(/^docProps\/thumbnail\.(jpe?g|png)$/i)[0];
+  return f ? imageToJpeg(await f.async('blob')) : null;
+}
+// Best source first: a picture the admin chose, then the PDF, then the PPTX thumbnail.
+async function makeCover({image, pdf, pptx}){
+  const tries = [image && (() => imageToJpeg(image)), pdf && (() => coverFromPdf(pdf)), pptx && (() => coverFromPptx(pptx))];
+  for(const t of tries){
+    if(!t) continue;
+    try{ const b = await t(); if(b) return b; }catch(e){ console.warn('cover', e); }
+  }
+  return null;
+}
+async function uploadCover(g, blob){
+  const path = `${g}/${uid()}.jpg`;
+  const { error } = await sb.storage.from(BUCKET).upload(path, blob, {contentType: 'image/jpeg', upsert: false});
+  if(error) throw error;
+  return path;
+}
+
 function fileLinks(p){
   const files = (p.files || []).slice().sort((a, b) => a.kind === 'pptx' ? -1 : b.kind === 'pptx' ? 1 : 0);
   return files.map((f, i) => `<a class="btn${i ? ' ghost' : ''}" href="${viewHash(p, f.kind)}">${f.kind === 'pptx' ? 'Slaydlarni ko\'rish' : 'PDF ko\'rish'}</a>`).join('');
 }
 function presCard(p, showGroup){
+  const first = (p.files || []).find(f => f.kind === 'pptx') || (p.files || [])[0];
+  const thumb = p.cover
+    ? `<img src="${esc(publicUrl(p.cover))}" alt="" loading="lazy">`
+    : `<span class="ph"><b>${esc(p.group)}</b>${first ? first.kind.toUpperCase() : ''}</span>`;
   return `<article class="pres">
+    <a class="thumb" href="${first ? viewHash(p, first.kind) : '#'}" aria-label="${esc(p.title)}">${thumb}</a>
     <h3>${esc(p.title)}</h3>
     <div class="by">${esc(p.student)}${showGroup ? ' · ' + esc(p.group) + '-guruh' : ''}</div>
     <div class="files">${fileLinks(p)}</div>
-    ${isAdmin ? `<button class="btn danger del" type="button" data-del="${esc(p.id)}">O'chirish</button>` : ''}
+    ${isAdmin ? `<div class="admin-row">
+      <button class="btn ghost small" type="button" data-cover="${esc(p.id)}">${p.cover ? 'Rasmni almashtirish' : 'Rasm qo\'shish'}</button>
+      <button class="btn danger small" type="button" data-del="${esc(p.id)}">O'chirish</button>
+    </div>` : ''}
   </article>`;
 }
 function banner(){
@@ -84,6 +152,7 @@ function uploadForm(g){
     <label class="field">O'quvchi ismi<input type="text" id="up-student" required maxlength="120"></label>
     <label class="field">PDF fayl<input type="file" id="up-pdf" accept=".pdf,application/pdf"><small>20 MB gacha</small></label>
     <label class="field">PPTX fayl<input type="file" id="up-pptx" accept=".pptx,${MIME.pptx}"><small>20 MB gacha</small></label>
+    <label class="field">Muqova rasmi (ixtiyoriy)<input type="file" id="up-img" accept="image/*"><small>Tanlanmasa, birinchi slayd avtomatik olinadi</small></label>
     <div class="actions">
       <button class="btn" type="submit" id="up-btn"${formState.busy ? ' disabled' : ''}>Yuklash</button>
       <span class="status${formState.err ? ' err' : ''}" id="up-status" role="status">${esc(formState.msg)}</span>
@@ -202,7 +271,7 @@ function refresh(){
 
 async function loadItems(){
   const { data, error } = await sb.from('presentations')
-    .select('id, group, title, student, files, created_at')
+    .select('*')
     .order('created_at', {ascending: false});
   if(error){ dbState = 'error'; console.error(error); }
   else { items = data; dbState = 'ok'; }
@@ -230,6 +299,7 @@ async function submitUpload(g){
   const student = document.getElementById('up-student').value.trim();
   const pdf = document.getElementById('up-pdf').files[0];
   const pptx = document.getElementById('up-pptx').files[0];
+  const image = document.getElementById('up-img').files[0];
   const setMsg = (msg, err, busy) => {
     formState = {msg, err: !!err, busy: !!busy};
     const s = document.getElementById('up-status'), b = document.getElementById('up-btn');
@@ -242,6 +312,7 @@ async function submitUpload(g){
   if(bad) return setMsg(bad, true);
 
   const files = [];
+  let cover = null;
   try{
     for(const [kind, f] of [['pdf', pdf], ['pptx', pptx]]){
       if(!f) continue;
@@ -251,8 +322,13 @@ async function submitUpload(g){
       if(error) throw error;
       files.push({kind, path, name: f.name, size: f.size});
     }
+    setMsg("Muqova rasmi tayyorlanmoqda…", false, true);
+    const coverBlob = await makeCover({image, pdf, pptx});
+    if(coverBlob) cover = await uploadCover(g, coverBlob).catch(() => null);
     setMsg("Saqlanmoqda…", false, true);
-    const { error } = await sb.from('presentations').insert({group: g, title, student, files});
+    const row = {group: g, title, student, files};
+    if(cover) row.cover = cover;
+    const { error } = await sb.from('presentations').insert(row);
     if(error) throw error;
     formState = {msg:'', err:false, busy:false};
     await loadItems();
@@ -261,7 +337,8 @@ async function submitUpload(g){
     if(currentGroup() === g) group(g);
   }catch(e){
     // roll back files already uploaded so nothing is left orphaned
-    if(files.length) await sb.storage.from(BUCKET).remove(files.map(f => f.path)).catch(() => {});
+    const left = files.map(f => f.path).concat(cover ? [cover] : []);
+    if(left.length) await sb.storage.from(BUCKET).remove(left).catch(() => {});
     setMsg("Yuklab bo'lmadi: " + ((e && e.message) || "noma'lum xato"), true, false);
   }
 }
@@ -280,10 +357,53 @@ async function removeItem(id, btn){
   btn.disabled = true;
   const { error } = await sb.from('presentations').delete().eq('id', id);
   if(error){ btn.disabled = false; btn.textContent = "O'chirib bo'lmadi"; return; }
-  const paths = (p.files || []).map(f => f.path).filter(Boolean);
+  const paths = (p.files || []).map(f => f.path).concat(p.cover ? [p.cover] : []).filter(Boolean);
   if(paths.length) await sb.storage.from(BUCKET).remove(paths).catch(() => {});
   await loadItems();
 }
+
+// Admin: add or replace the cover of an existing presentation.
+// First try the first slide of its own files; if there is none (or a cover exists), ask for a picture.
+const picker = Object.assign(document.createElement('input'), {type: 'file', accept: 'image/*'});
+async function setCover(id, btn, image){
+  const p = items.find(x => x.id === id);
+  if(!p) return;
+  btn.disabled = true; btn.textContent = 'Tayyorlanmoqda…';
+  try{
+    let src = {image};
+    if(!image){
+      for(const f of p.files || []){
+        const r = await fetch(publicUrl(f.path));
+        if(r.ok) src[f.kind] = await r.blob();
+      }
+    }
+    const blob = await makeCover(src);
+    if(!blob){
+      btn.disabled = false; btn.textContent = 'Rasm tanlang';
+      picker.onchange = () => { if(picker.files[0]) setCover(id, btn, picker.files[0]); picker.value = ''; };
+      picker.click();
+      return;
+    }
+    const path = await uploadCover(p.group, blob);
+    const { error } = await sb.from('presentations').update({cover: path}).eq('id', id);
+    if(error){ await sb.storage.from(BUCKET).remove([path]).catch(() => {}); throw error; }
+    if(p.cover) await sb.storage.from(BUCKET).remove([p.cover]).catch(() => {});
+    await loadItems();
+  }catch(e){
+    console.error(e);
+    btn.disabled = false; btn.textContent = "Bo'lmadi: " + ((e && e.message) || 'xato');
+  }
+}
+app.addEventListener('click', e => {
+  const b = e.target.closest('[data-cover]');
+  if(!b) return;
+  const id = b.getAttribute('data-cover');
+  const p = items.find(x => x.id === id);
+  if(p && p.cover){ // replacing: let the admin pick a picture
+    picker.onchange = () => { if(picker.files[0]) setCover(id, b, picker.files[0]); picker.value = ''; };
+    picker.click();
+  } else setCover(id, b);
+});
 
 q.addEventListener('input', () => { if(location.hash) history.replaceState(null,'',location.pathname); home(); });
 window.addEventListener('hashchange', () => { if(!formState.busy) formState = {msg:'', err:false, busy:false}; route(); window.scrollTo(0,0); });
