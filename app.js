@@ -31,11 +31,16 @@ function publicUrl(path, downloadName){
   return sb.storage.from(BUCKET).getPublicUrl(path, opts).data.publicUrl;
 }
 
+const OFFICE_LIMIT = 10 * 1048576; // Office web viewer opens PowerPoint files up to ~10 MB
+const viewHash = (p, kind) => '#korish/' + p.id + '/' + kind;
+const officeUrl = url => 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(url);
+// Phones often can't show a PDF inside a frame; Google's viewer can.
+const pdfUrl = url => navigator.pdfViewerEnabled === false
+  ? 'https://docs.google.com/gview?embedded=1&url=' + encodeURIComponent(url) : url;
+
 function fileLinks(p){
-  return (p.files || []).map(f => f.kind === 'pdf'
-    ? `<a class="btn" href="${esc(publicUrl(f.path))}" target="_blank" rel="noopener">PDF ochish</a>`
-    : `<a class="btn ghost" href="${esc(publicUrl(f.path, f.name))}" rel="noopener">PPTX yuklab olish</a>`
-  ).join('');
+  const files = (p.files || []).slice().sort((a, b) => a.kind === 'pptx' ? -1 : b.kind === 'pptx' ? 1 : 0);
+  return files.map((f, i) => `<a class="btn${i ? ' ghost' : ''}" href="${viewHash(p, f.kind)}">${f.kind === 'pptx' ? 'Slaydlarni ko\'rish' : 'PDF ko\'rish'}</a>`).join('');
 }
 function presCard(p, showGroup){
   return `<article class="pres">
@@ -135,13 +140,53 @@ function login(){
   });
 }
 
+let viewKey = null;
+function viewer(id, kind){
+  const p = items.find(x => x.id === id);
+  if(!p){
+    viewKey = null;
+    app.innerHTML = `<a class="back" href="#">← Barcha guruhlar</a>` +
+      (dbState === 'ok' ? `<div class="empty" style="margin-top:24px">Bu taqdimot topilmadi yoki o'chirilgan.</div>` : banner());
+    return;
+  }
+  const f = (p.files || []).find(x => x.kind === kind) || (p.files || [])[0];
+  const key = p.id + '/' + f.kind;
+  if(viewKey === key && document.getElementById('viewer')) return; // keep the frame, don't reload slides
+  viewKey = key;
+  const url = publicUrl(f.path);
+  const tooBig = f.kind === 'pptx' && f.size > OFFICE_LIMIT;
+  const src = f.kind === 'pptx' ? officeUrl(url) : pdfUrl(url);
+  const tabs = (p.files || []).length > 1 ? (p.files || []).slice().sort((a, b) => a.kind === 'pptx' ? -1 : 1).map(x =>
+    `<a class="btn${x.kind === f.kind ? '' : ' ghost'}" href="${viewHash(p, x.kind)}">${x.kind === 'pptx' ? 'Slaydlar' : 'PDF'}</a>`).join('') : '';
+  app.innerHTML = `
+    <a class="back" href="#guruh-${esc(p.group)}">← ${esc(p.group)}-guruh</a>
+    <h1 style="margin-top:20px">${esc(p.title)}</h1>
+    <p class="lead" style="margin-bottom:16px">${esc(p.student)} · ${esc(p.group)}-guruh</p>
+    <div class="viewbar">${tabs}
+      <button class="btn ghost" type="button" id="fs">To'liq ekran</button>
+      <a class="btn ghost" href="${esc(publicUrl(f.path, f.name))}">Yuklab olish (${f.kind.toUpperCase()}${f.size ? ', ' + mb(f.size) : ''})</a>
+    </div>
+    ${tooBig ? `<p class="note">Fayl 10 MB dan katta, shuning uchun slaydlar bu yerda ochilmasligi mumkin. Unda "Yuklab olish" tugmasidan foydalaning.</p>` : ''}
+    <div class="frame"><iframe id="viewer" src="${esc(src)}" title="${esc(p.title)}" allowfullscreen></iframe></div>`;
+  document.getElementById('fs').addEventListener('click', () => {
+    const el = document.querySelector('.frame');
+    (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
+  });
+}
+function currentView(){
+  const m = location.hash.match(/^#korish\/([\w-]+)\/(pdf|pptx)$/);
+  return m ? {id: m[1], kind: m[2]} : null;
+}
 function currentGroup(){
   const m = location.hash.match(/^#guruh-(\d+)$/);
   return m && GROUP_IDS.includes(m[1]) ? m[1] : null;
 }
 function route(){
   renderAuth();
-  if(location.hash === '#kirish'){ q.value = ''; return login(); }
+  if(location.hash === '#kirish'){ q.value = ''; viewKey = null; return login(); }
+  const v = currentView();
+  if(v){ q.value = ''; return viewer(v.id, v.kind); }
+  viewKey = null;
   const g = currentGroup();
   if(g){ q.value = ''; group(g); } else home();
 }
