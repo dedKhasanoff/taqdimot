@@ -103,6 +103,32 @@ const sortedFiles = p => (p.files || []).slice().sort((a, b) => a.kind === 'pdf'
 function fileLinks(p){
   return sortedFiles(p).map((f, i) => `<a class="btn${i ? ' ghost' : ''}" href="${viewHash(p, f.kind)}">${i ? 'PowerPoint ko\'rinishi' : 'Slaydlarni ko\'rish'}</a>`).join('');
 }
+/* ---- Topics ---- */
+const NO_TOPIC = '~';
+const topicOf = p => (p.topic || '').trim();
+const topicKey = t => t.toLocaleLowerCase('uz');
+const topicHash = t => '#mavzu/' + (t ? encodeURIComponent(t) : NO_TOPIC);
+// Unique topics, most used first; spelling of the first one seen wins.
+function topicsList(){
+  const m = new Map();
+  for(const p of items){
+    const t = topicOf(p);
+    if(!t) continue;
+    const k = topicKey(t);
+    if(!m.has(k)) m.set(k, {name: t, n: 0});
+    m.get(k).n++;
+  }
+  return [...m.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, 'uz'));
+}
+const byTopic = t => items.filter(p => t ? topicKey(topicOf(p)) === topicKey(t) : !topicOf(p));
+// Reuse an existing topic's spelling so "tarix" and "Tarix" don't split into two sections.
+function canonTopic(t){
+  t = (t || '').trim().replace(/\s+/g, ' ');
+  if(!t) return '';
+  const hit = topicsList().find(x => topicKey(x.name) === topicKey(t));
+  return hit ? hit.name : t;
+}
+
 function presCard(p, showGroup){
   const first = sortedFiles(p)[0];
   const thumb = p.cover
@@ -112,8 +138,10 @@ function presCard(p, showGroup){
     <a class="thumb" href="${first ? viewHash(p, first.kind) : '#'}" aria-label="${esc(p.title)}">${thumb}</a>
     <h3>${esc(p.title)}</h3>
     <div class="by">${esc(p.student)}${showGroup ? ' · ' + esc(p.group) + '-guruh' : ''}</div>
+    ${topicOf(p) ? `<a class="chip small" href="${topicHash(canonTopic(topicOf(p)))}">${esc(canonTopic(topicOf(p)))}</a>` : ''}
     <div class="files">${fileLinks(p)}</div>
     ${isAdmin ? `<div class="admin-row">
+      <button class="btn ghost small" type="button" data-topic="${esc(p.id)}">${topicOf(p) ? 'Mavzuni o\'zgartirish' : 'Mavzu qo\'shish'}</button>
       <button class="btn ghost small" type="button" data-cover="${esc(p.id)}">${p.cover ? 'Rasmni almashtirish' : 'Rasm qo\'shish'}</button>
       <button class="btn danger small" type="button" data-del="${esc(p.id)}">O'chirish</button>
     </div>` : ''}
@@ -144,7 +172,41 @@ function home(){
         <div class="num">${g}</div>
         <div class="name">${g}-guruh</div>
         <span class="count">${plural(byGroup(g).length)}</span>
-      </a>`).join('') + `</div>`;
+      </a>`).join('') + `</div>` + topicSections();
+}
+const TOPIC_PREVIEW = 3;
+function topicSections(){
+  const topics = topicsList();
+  if(!topics.length) return '';
+  const rest = byTopic('');
+  const all = topics.concat(rest.length ? [{name: '', n: rest.length}] : []);
+  return `<section class="topics">
+    <h2 class="sec">Mavzular bo'yicha</h2>
+    <nav class="chips">${all.map(t => `<a class="chip" href="${topicHash(t.name)}">${esc(t.name || 'Boshqa')} <span>${t.n}</span></a>`).join('')}</nav>
+    ${all.map(t => {
+      const list = byTopic(t.name);
+      return `<div class="topic">
+        <div class="topic-head"><h3>${esc(t.name || 'Boshqa')}</h3>
+          ${list.length > TOPIC_PREVIEW ? `<a href="${topicHash(t.name)}">Hammasi (${list.length}) →</a>` : ''}</div>
+        <div class="list">${list.slice(0, TOPIC_PREVIEW).map(p => presCard(p, true)).join('')}</div>
+      </div>`;
+    }).join('')}
+  </section>`;
+}
+function topicPage(t){
+  const list = byTopic(t);
+  app.innerHTML = `
+    <a class="back" href="#">← Bosh sahifa</a>
+    <h1>${esc(t || 'Boshqa')}</h1>
+    <p class="lead">${plural(list.length)}${t ? '' : ' · mavzusi belgilanmagan'}</p>` + banner() +
+    (list.length ? `<div class="list">${list.map(p => presCard(p, true)).join('')}</div>`
+                 : (dbState === 'ok' ? `<div class="empty">Bu mavzuda hali taqdimot yo'q.</div>` : ''));
+}
+function currentTopic(){
+  const m = location.hash.match(/^#mavzu\/(.*)$/);
+  if(!m) return null;
+  if(m[1] === NO_TOPIC) return '';
+  try{ return decodeURIComponent(m[1]); }catch(_){ return null; }
 }
 function uploadForm(g){
   return `<form class="upload" id="up" autocomplete="off">
@@ -153,6 +215,9 @@ function uploadForm(g){
     <label class="field">O'quvchi ismi<input type="text" id="up-student" required maxlength="120"></label>
     <label class="field">PDF fayl<input type="file" id="up-pdf" accept=".pdf,application/pdf"><small>20 MB gacha</small></label>
     <label class="field">PPTX fayl<input type="file" id="up-pptx" accept=".pptx,${MIME.pptx}"><small>20 MB gacha</small></label>
+    <label class="field">Mavzu<input type="text" id="up-topic" list="topic-list" maxlength="80" placeholder="masalan: Tarix">
+      <datalist id="topic-list">${topicsList().map(t => `<option value="${esc(t.name)}">`).join('')}</datalist>
+      <small>Ro'yxatdan tanlang yoki yangisini yozing</small></label>
     <label class="field">Muqova rasmi (ixtiyoriy)<input type="file" id="up-img" accept="image/*"><small>Tanlanmasa, birinchi slayd avtomatik olinadi</small></label>
     <div class="actions">
       <button class="btn" type="submit" id="up-btn"${formState.busy ? ' disabled' : ''}>Yuklash</button>
@@ -173,7 +238,7 @@ function group(g){
   if(f) f.addEventListener('submit', e => { e.preventDefault(); submitUpload(g); });
 }
 function search(term){
-  const hits = items.filter(p => (p.title + ' ' + p.student + ' ' + p.group).toLowerCase().includes(term));
+  const hits = items.filter(p => (p.title + ' ' + p.student + ' ' + p.group + ' ' + topicOf(p)).toLowerCase().includes(term));
   app.innerHTML = `<h1>Qidiruv natijalari</h1><p class="lead">${hits.length} ta topildi</p>` +
     (hits.length ? `<div class="list">${hits.map(p => presCard(p, true)).join('')}</div>`
                  : `<div class="empty">Hech narsa topilmadi. Boshqa so'z bilan urinib ko'ring.</div>`);
@@ -340,6 +405,8 @@ function route(){
   const v = currentView();
   if(v){ q.value = ''; return viewer(v.id, v.kind); }
   viewKey = null; deck = null;
+  const t = currentTopic();
+  if(t !== null){ q.value = ''; return topicPage(t); }
   const g = currentGroup();
   if(g){ q.value = ''; group(g); } else home();
 }
@@ -382,6 +449,7 @@ async function submitUpload(g){
   const pdf = document.getElementById('up-pdf').files[0];
   const pptx = document.getElementById('up-pptx').files[0];
   const image = document.getElementById('up-img').files[0];
+  const topic = canonTopic(document.getElementById('up-topic').value);
   const setMsg = (msg, err, busy) => {
     formState = {msg, err: !!err, busy: !!busy};
     const s = document.getElementById('up-status'), b = document.getElementById('up-btn');
@@ -409,6 +477,7 @@ async function submitUpload(g){
     if(coverBlob) cover = await uploadCover(g, coverBlob).catch(() => null);
     setMsg("Saqlanmoqda…", false, true);
     const row = {group: g, title, student, files};
+    if(topic) row.topic = topic;
     if(cover) row.cover = cover;
     const { error } = await sb.from('presentations').insert(row);
     if(error) throw error;
@@ -489,6 +558,20 @@ app.addEventListener('click', e => {
 
 q.addEventListener('input', () => { if(location.hash) history.replaceState(null,'',location.pathname); home(); });
 window.addEventListener('hashchange', () => { if(!formState.busy) formState = {msg:'', err:false, busy:false}; route(); window.scrollTo(0,0); });
+app.addEventListener('click', async e => {
+  const b = e.target.closest('[data-topic]');
+  if(!b) return;
+  const p = items.find(x => x.id === b.getAttribute('data-topic'));
+  if(!p) return;
+  const names = topicsList().map(t => t.name).join(', ');
+  const answer = prompt("Mavzu nomi" + (names ? " (mavjudlar: " + names + ")" : '') + ".\nBo'sh qoldirsangiz, mavzu olib tashlanadi.", topicOf(p));
+  if(answer === null) return;
+  const topic = canonTopic(answer).slice(0, 80) || null;
+  b.disabled = true; b.textContent = 'Saqlanmoqda…';
+  const { error } = await sb.from('presentations').update({topic}).eq('id', p.id);
+  if(error){ b.disabled = false; b.textContent = "Bo'lmadi: " + error.message; return; }
+  await loadItems();
+});
 app.addEventListener('click', e => { const b = e.target.closest('[data-del]'); if(b) removeItem(b.getAttribute('data-del'), b); });
 authEl.addEventListener('click', async e => {
   if(e.target.id === 'logout'){ await sb.auth.signOut(); }

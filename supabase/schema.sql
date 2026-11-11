@@ -25,9 +25,11 @@ create table if not exists public.presentations (
   -- [{kind: "pdf"|"pptx", path, name, size}]
   files jsonb not null default '[]'::jsonb check (jsonb_typeof(files) = 'array' and jsonb_array_length(files) between 1 and 2),
   cover text, -- birinchi slayd rasmi (storage yo'li)
+  topic text check (topic is null or char_length(topic) between 1 and 80), -- mavzu
   created_at timestamptz not null default now()
 );
 alter table public.presentations add column if not exists cover text;
+alter table public.presentations add column if not exists topic text check (topic is null or char_length(topic) between 1 and 80);
 create index if not exists presentations_created_at_idx on public.presentations (created_at desc);
 alter table public.presentations enable row level security;
 

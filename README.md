@@ -6,6 +6,7 @@
 - Yuklash va o'chirish faqat admin uchun (Supabase hisobi bilan kiradi).
 - Fayllar: faqat PDF va PPTX, har biri 20 MB gacha.
 - Kartada muqova rasmi: yuklashda PDF'ning birinchi sahifasidan yoki PPTX ichidagi kichik rasmdan avtomatik olinadi, xohlasa qo'lda tanlanadi.
+- Mavzular: bosh sahifada guruhlar ostida mavzu bo'yicha bo'limlar, har bir mavzuning alohida sahifasi (`#mavzu/...`).
 - Taqdimotni saytda ko'rish: PPTX Microsoft (10 MB dan kattasi Google) viewer orqali, PDF brauzerda.
 
 ## Fayllar
@@ -16,6 +17,7 @@
 | `config.js` | Supabase manzili va ochiq (anon) kalit |
 | `supabase/schema.sql` | Jadval, admin ro'yxati, ruxsat qoidalari, fayl ombori |
 | `supabase/02_cover.sql` | Muqova rasmlari uchun yangilanish (eski bazalar uchun) |
+| `supabase/03_topic.sql` | Mavzular uchun yangilanish (eski bazalar uchun) |
 | `netlify.toml` | Netlify sozlamasi |
 
 ## O'rnatish
@@ -44,7 +46,7 @@ Saytda o'ng yuqoridagi **Kirish** tugmasi orqali admin sifatida kiring. Guruh ka
 Jadval `presentations`:
 ```
 {id, group: "101".."110", title, student,
- files: [{kind: "pdf"|"pptx", path, name, size}], cover, created_at}
+ files: [{kind: "pdf"|"pptx", path, name, size}], cover, topic, created_at}
 ```
 Fayllar `taqdimotlar` bucket'ida `<guruh>/<uuid>.<pdf|pptx>` yo'lida saqlanadi.
 
