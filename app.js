@@ -164,15 +164,17 @@ function renderAuth(){
 function home(){
   const term = q.value.trim().toLowerCase();
   if(term) return search(term);
+  const topics = topicSections();
   app.innerHTML = `
-    <h1>Guruhlar bo'yicha taqdimotlar</h1>
-    <p class="lead">Guruhingizni tanlang va o'quvchilar tayyorlagan taqdimotlarni oching.</p>` + banner() + `
-    <div class="grid" style="margin-top:24px">` + GROUP_IDS.map(g => `
+    <h1>O'quvchilar taqdimotlari</h1>
+    <p class="lead">Mavzu yoki guruhni tanlang va o'quvchilar tayyorlagan taqdimotlarni oching.</p>` + banner() + topics + `
+    <h2 class="sec"${topics ? '' : ' style="margin-top:24px"'}>Guruhlar</h2>
+    <div class="grid">` + GROUP_IDS.map(g => `
       <a class="card" href="#guruh-${g}">
         <div class="num">${g}</div>
         <div class="name">${g}-guruh</div>
         <span class="count">${plural(byGroup(g).length)}</span>
-      </a>`).join('') + `</div>` + topicSections();
+      </a>`).join('') + `</div>`;
 }
 const TOPIC_PREVIEW = 3;
 function topicSections(){
