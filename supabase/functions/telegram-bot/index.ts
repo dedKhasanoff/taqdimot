@@ -21,10 +21,16 @@ const TG_API = Deno.env.get("TELEGRAM_API") ?? "https://api.telegram.org";
 const BUCKET = "taqdimotlar";
 const GROUPS = ["101", "102", "103", "104", "105", "106", "107", "108", "109", "110"];
 const MAX_BYTES = 20 * 1024 * 1024; // also the Telegram limit for bot downloads
+type Kind = "pdf" | "pptx" | "html";
+const KINDS: Kind[] = ["pdf", "pptx", "html"];
+// Content type used in storage. HTML is kept as plain text: the site only shows it in a sandbox.
 const MIME: Record<string, string> = {
   pdf: "application/pdf",
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  html: "text/plain",
 };
+// Content type when the file is sent back to a Telegram user
+const SEND_MIME: Record<string, string> = { ...MIME, html: "text/html" };
 const LIMITS = { topic: 80, title: 200, student: 120 };
 
 function serviceKey(): string {
@@ -69,7 +75,7 @@ type FileRef = { file_id: string; name: string; size: number };
 type Data = {
   group?: string; topic?: string | null; topics?: string[];
   title?: string; student?: string;
-  files?: Partial<Record<"pdf" | "pptx", FileRef>>;
+  files?: Partial<Record<Kind, FileRef>>;
 };
 type Session = { step: string; data: Data };
 
@@ -131,15 +137,17 @@ async function askFiles(chat: number, data: Data) {
   data.files = {};
   await setSession(chat, "files", data);
   await send(chat,
-    "<b>5/5.</b> Taqdimot faylini yuboring: <b>PDF</b> yoki <b>PPTX</b>, 20 MB gacha.\n" +
-    "Ikkalasini ham yuborsangiz yaxshi: PDF telefonda tiniqroq ko'rinadi.");
+    "<b>5/5.</b> Taqdimot faylini yuboring: <b>PDF</b>, <b>PPTX</b> yoki <b>HTML</b>, 20 MB gacha.\n" +
+    "Bir nechtasini yuborsangiz ham bo'ladi. PDF telefonda eng tiniq ko'rinadi.\n" +
+    "HTML bitta fayl bo'lishi kerak (rasmlar fayl ichiga joylangan).");
 }
 
-function fileKind(doc: Json): "pdf" | "pptx" | null {
+function fileKind(doc: Json): Kind | null {
   const name = String(doc.file_name ?? "").toLowerCase();
   const mime = String(doc.mime_type ?? "");
   if (name.endsWith(".pdf") || mime === MIME.pdf) return "pdf";
   if (name.endsWith(".pptx") || mime === MIME.pptx) return "pptx";
+  if (name.endsWith(".html") || name.endsWith(".htm") || mime === "text/html") return "html";
   return null;
 }
 
@@ -152,7 +160,7 @@ async function onDocument(chat: number, s: Session, doc: Json) {
     const ppt = String(doc.file_name ?? "").toLowerCase().endsWith(".ppt");
     return send(chat, ppt
       ? "Eski .ppt format qabul qilinmaydi. PowerPoint'da <b>Fayl → Saqlash</b> orqali .pptx yoki PDF qilib saqlang va qayta yuboring."
-      : "Faqat <b>PDF</b> yoki <b>PPTX</b> fayl qabul qilinadi.");
+      : "Faqat <b>PDF</b>, <b>PPTX</b> yoki <b>HTML</b> fayl qabul qilinadi.");
   }
   const size = Number(doc.file_size ?? 0);
   if (size > MAX_BYTES) {
@@ -161,11 +169,12 @@ async function onDocument(chat: number, s: Session, doc: Json) {
   }
   const data = s.data;
   data.files = { ...(data.files ?? {}), [kind]: { file_id: String(doc.file_id), name: String(doc.file_name ?? kind), size } };
-  if (data.files.pdf && data.files.pptx) return finish(chat, data);
+  const missing = KINDS.filter((k) => !data.files![k]);
+  if (!missing.length) return finish(chat, data);
   await setSession(chat, "files", data);
-  const other = kind === "pdf" ? "PPTX" : "PDF";
+  const got = KINDS.filter((k) => data.files![k]).map((k) => k.toUpperCase()).join(", ");
   await send(chat,
-    `✅ ${kind.toUpperCase()} qabul qilindi.\n${other} ham bo'lsa, uni yuboring. Bo'lmasa, «Yuborish» tugmasini bosing.`,
+    `✅ Qabul qilindi: ${got}.\n${missing.map((k) => k.toUpperCase()).join(" yoki ")} ham bo'lsa, yuboring. Bo'lmasa, «Yuborish» tugmasini bosing.`,
     keyboard([[{ text: "✅ Yuborish", data: "done" }]]));
 }
 
@@ -205,7 +214,7 @@ async function save(chat: number, data: Data) {
   try {
     const files: StoredFile[] = [];
     let cover: string | null = null;
-    for (const kind of ["pdf", "pptx"] as const) {
+    for (const kind of KINDS) {
       const ref = data.files?.[kind];
       if (!ref) continue;
       const bytes = await download(ref.file_id);
@@ -280,7 +289,7 @@ async function sendPresentation(chat: number, id: string, kind: string) {
   form.append("chat_id", String(chat));
   form.append("caption", caption);
   form.append("parse_mode", "HTML");
-  form.append("document", new File([blob], f.name || `taqdimot.${f.kind}`, { type: MIME[f.kind] ?? "application/octet-stream" }));
+  form.append("document", new File([blob], f.name || `taqdimot.${f.kind}`, { type: SEND_MIME[f.kind] ?? "application/octet-stream" }));
   const r = await tgForm("sendDocument", form) as { ok: boolean; result?: { document?: { file_id?: string } } };
   if (!r.ok) return send(chat, "Faylni yuborib bo'lmadi. Birozdan keyin qayta urinib ko'ring.");
   const fileId = r.result?.document?.file_id;
@@ -299,7 +308,7 @@ async function onMessage(msg: Json) {
   const cmd = text.startsWith("/") ? text.split(/[\s@]/)[0].toLowerCase() : "";
 
   if (cmd === "/start") {
-    const dl = (text.split(/\s+/)[1] ?? "").match(/^dl_([0-9a-f-]{36})_(pdf|pptx)$/i);
+    const dl = (text.split(/\s+/)[1] ?? "").match(/^dl_([0-9a-f-]{36})_(pdf|pptx|html)$/i);
     if (dl) return sendPresentation(chat, dl[1].toLowerCase(), dl[2].toLowerCase());
   }
   if (cmd === "/start" || cmd === "/yangi") return askGroup(chat);
@@ -316,7 +325,7 @@ async function onMessage(msg: Json) {
   if (msg.document) return onDocument(chat, s, msg.document as Json);
   if (s.step === "saving") return send(chat, "⏳ Taqdimot saqlanmoqda, biroz kuting…");
   if (!text || cmd) {
-    if (s.step === "files") return send(chat, "Iltimos, PDF yoki PPTX faylni <b>fayl (document)</b> sifatida yuboring.");
+    if (s.step === "files") return send(chat, "Iltimos, PDF, PPTX yoki HTML faylni <b>fayl (document)</b> sifatida yuboring.");
     return send(chat, "Taqdimot yuborish uchun /start ni bosing.");
   }
 
@@ -338,7 +347,7 @@ async function onMessage(msg: Json) {
       data.student = text;
       return askFiles(chat, data);
     case "files":
-      return send(chat, "Endi PDF yoki PPTX faylni yuboring.");
+      return send(chat, "Endi PDF, PPTX yoki HTML faylni yuboring.");
     default:
       return send(chat, "Taqdimot yuborish uchun /start ni bosing.");
   }
@@ -367,7 +376,7 @@ async function onCallback(cq: Json) {
     await closeKeyboard(`<b>2/5.</b> Mavzu: <b>${esc(data.topic ?? "Mavzusiz")}</b>`);
     return askTitle(chat, data);
   }
-  if (value === "done" && s.step === "files" && (data.files?.pdf || data.files?.pptx)) {
+  if (value === "done" && s.step === "files" && KINDS.some((k) => data.files?.[k])) {
     await tg("editMessageReplyMarkup", { chat_id: chat, message_id: msg.message_id, reply_markup: { inline_keyboard: [] } });
     return finish(chat, data);
   }

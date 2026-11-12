@@ -4,7 +4,7 @@
 
 - Ko'rish hamma uchun ochiq, kirish shart emas.
 - Yuklash va o'chirish faqat admin uchun (Supabase hisobi bilan kiradi).
-- Fayllar: faqat PDF va PPTX, har biri 20 MB gacha.
+- Fayllar: PDF, PPTX va HTML, har biri 20 MB gacha. HTML saytda himoyalangan oynada (sandbox) ochiladi: skriptlar ishlaydi, lekin saytga va admin kirishiga tegolmaydi.
 - Kartada muqova rasmi: yuklashda PDF'ning birinchi sahifasidan yoki PPTX ichidagi kichik rasmdan avtomatik olinadi, xohlasa qo'lda tanlanadi.
 - Mavzular: bosh sahifada guruhlar ostida mavzu bo'yicha bo'limlar, har bir mavzuning alohida sahifasi (`#mavzu/...`).
 - Taqdimotni saytda ko'rish: PPTX Microsoft (10 MB dan kattasi Google) viewer orqali, PDF brauzerda.
@@ -21,6 +21,7 @@
 | `netlify.toml` | Netlify sozlamasi |
 | `supabase/functions/telegram-bot/index.ts` | Telegram bot (Supabase Edge Function) |
 | `supabase/04_bot.sql` | Bot uchun jadval (eski bazalar uchun) |
+| `supabase/05_html.sql` | HTML fayllar uchun yangilanish (eski bazalar uchun) |
 
 ## O'rnatish
 
@@ -46,7 +47,7 @@ Saytda o'ng yuqoridagi **Kirish** tugmasi orqali admin sifatida kiring. Guruh ka
 
 ## Telegram bot
 O'quvchilar taqdimotni Telegram bot orqali yuboradi, u saytga darhol chiqadi.
-Botda: `/start` → guruh → mavzu → nom → ism → PDF/PPTX fayl (20 MB gacha). Yangi taqdimot haqida adminga xabar keladi.
+Botda: `/start` → guruh → mavzu → nom → ism → PDF/PPTX/HTML fayl (20 MB gacha). Saytdagi "yuklab olish" tugmasi faylni shu bot orqali beradi. Yangi taqdimot haqida adminga xabar keladi.
 
 1. **Bot yaratish**: Telegram'da @BotFather → `/newbot` → nom va username bering → **token**ni saqlang.
 2. **Jadval**: Supabase SQL Editor'da `supabase/04_bot.sql` ni ishga tushiring.
@@ -68,7 +69,7 @@ Faqat PDF yuborilgan taqdimotlarning muqova rasmi admin saytga kirganda avtomati
 Jadval `presentations`:
 ```
 {id, group: "101".."110", title, student,
- files: [{kind: "pdf"|"pptx", path, name, size}], cover, topic, created_at}
+ files: [{kind: "pdf"|"pptx"|"html", path, name, size, tg_file_id?}], cover, topic, created_at}
 ```
 Fayllar `taqdimotlar` bucket'ida `<guruh>/<uuid>.<pdf|pptx>` yo'lida saqlanadi.
 

@@ -23,7 +23,7 @@ create table if not exists public.presentations (
   title text not null check (char_length(title) between 1 and 200),
   student text not null check (char_length(student) between 1 and 120),
   -- [{kind: "pdf"|"pptx", path, name, size}]
-  files jsonb not null default '[]'::jsonb check (jsonb_typeof(files) = 'array' and jsonb_array_length(files) between 1 and 2),
+  files jsonb not null default '[]'::jsonb check (jsonb_typeof(files) = 'array' and jsonb_array_length(files) between 1 and 3),
   cover text, -- birinchi slayd rasmi (storage yo'li)
   topic text check (topic is null or char_length(topic) between 1 and 80), -- mavzu
   created_at timestamptz not null default now()
@@ -49,10 +49,10 @@ drop policy if exists "pres_delete_admin" on public.presentations;
 create policy "pres_delete_admin" on public.presentations
   for delete to authenticated using (public.is_admin());
 
--- 3. Fayl ombori: ochiq o'qish, 20 MB, PDF, PPTX va muqova rasmlari
+-- 3. Fayl ombori: ochiq o'qish, 20 MB, PDF, PPTX, HTML (text/plain sifatida) va muqova rasmlari
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('taqdimotlar', 'taqdimotlar', true, 20971520,
-        array['application/pdf','application/vnd.openxmlformats-officedocument.presentationml.presentation','image/jpeg'])
+        array['application/pdf','application/vnd.openxmlformats-officedocument.presentationml.presentation','image/jpeg','text/plain'])
 on conflict (id) do update set
   public = excluded.public,
   file_size_limit = excluded.file_size_limit,

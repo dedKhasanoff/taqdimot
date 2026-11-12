@@ -2,8 +2,13 @@ const GROUP_IDS = ['101','102','103','104','105','106','107','108','109','110'];
 const MAX_BYTES = 20 * 1048576;
 const MIME = {
   pdf: 'application/pdf',
-  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  // HTML is stored as plain text and only ever shown inside a sandboxed frame (see htmlStage)
+  html: 'text/plain'
 };
+const KINDS = ['pdf', 'html', 'pptx'];          // also the viewing preference order
+const KIND_EXT = {pdf: ['pdf'], pptx: ['pptx'], html: ['html', 'htm']};
+const KIND_TAB = {pdf: 'Slaydlar', html: 'HTML', pptx: 'PowerPoint'};
 const app = document.getElementById('app');
 const q = document.getElementById('q');
 const authEl = document.getElementById('auth');
@@ -104,9 +109,9 @@ async function uploadCover(g, blob){
 }
 
 // PDF goes first: the site draws it itself, sharp on any screen. PPTX uses Microsoft's viewer.
-const sortedFiles = p => (p.files || []).slice().sort((a, b) => a.kind === 'pdf' ? -1 : b.kind === 'pdf' ? 1 : 0);
+const sortedFiles = p => (p.files || []).slice().sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind));
 function fileLinks(p){
-  return sortedFiles(p).map((f, i) => `<a class="btn${i ? ' ghost' : ''}" href="${viewHash(p, f.kind)}">${i ? 'PowerPoint ko\'rinishi' : 'Slaydlarni ko\'rish'}</a>`).join('');
+  return sortedFiles(p).map((f, i) => `<a class="btn${i ? ' ghost' : ''}" href="${viewHash(p, f.kind)}">${i ? KIND_TAB[f.kind] + ' ko\'rinishi' : 'Slaydlarni ko\'rish'}</a>`).join('');
 }
 /* ---- Topics ---- */
 const NO_TOPIC = '~';
@@ -268,6 +273,7 @@ function uploadForm(g){
     <label class="field">O'quvchi ismi<input type="text" id="up-student" required maxlength="120"></label>
     <label class="field">PDF fayl<input type="file" id="up-pdf" accept=".pdf,application/pdf"><small>20 MB gacha</small></label>
     <label class="field">PPTX fayl<input type="file" id="up-pptx" accept=".pptx,${MIME.pptx}"><small>20 MB gacha</small></label>
+    <label class="field">HTML fayl<input type="file" id="up-html" accept=".html,.htm,text/html"><small>Bitta fayl bo'lishi kerak (rasmlar ichiga joylangan)</small></label>
     <label class="field">Mavzu<input type="text" id="up-topic" list="topic-list" maxlength="80" placeholder="masalan: Tarix">
       <datalist id="topic-list">${topicsList().map(t => `<option value="${esc(t.name)}">`).join('')}</datalist>
       <small>Ro'yxatdan tanlang yoki yangisini yozing</small></label>
@@ -346,8 +352,10 @@ function viewer(id, kind){
   const src = big ? googleUrl(url) : officeUrl(url);
   const hasPdf = (p.files || []).some(x => x.kind === 'pdf');
   const tabs = (p.files || []).length > 1 ? sortedFiles(p).map(x =>
-    `<a class="btn${x.kind === f.kind ? '' : ' ghost'}" href="${viewHash(p, x.kind)}">${x.kind === 'pdf' ? 'Slaydlar' : 'PowerPoint'}</a>`).join('') : '';
-  const stage = f.kind === 'pdf'
+    `<a class="btn${x.kind === f.kind ? '' : ' ghost'}" href="${viewHash(p, x.kind)}">${KIND_TAB[x.kind] || x.kind}</a>`).join('') : '';
+  const stage = f.kind === 'html'
+    ? `<div class="frame html-frame loading" id="viewer"></div>`
+    : f.kind === 'pdf'
     ? `<div class="frame deck loading" id="viewer" tabindex="0" aria-label="${esc(p.title)}">
         <canvas id="slide"></canvas>
         <button class="nav prev" type="button" aria-label="Oldingi slayd">‹</button>
@@ -372,6 +380,30 @@ function viewer(id, kind){
   });
   deck = null;
   if(f.kind === 'pdf') openDeck(url, key);
+  if(f.kind === 'html') openHtml(url, key, p.title);
+}
+
+/* HTML presentations come from anyone (the bot is open), so they run in a sandbox:
+   scripts and animations work, but the page gets a unique origin with no access
+   to this site, its storage or the admin's login. */
+async function openHtml(url, key, title){
+  const box = document.getElementById('viewer');
+  try{
+    const r = await fetch(url);
+    if(!r.ok) throw new Error(r.status);
+    const html = await r.text();
+    if(viewKey !== key) return;
+    const fr = document.createElement('iframe');
+    fr.setAttribute('sandbox', 'allow-scripts allow-popups allow-pointer-lock');
+    fr.setAttribute('referrerpolicy', 'no-referrer');
+    fr.title = title;
+    fr.srcdoc = html;
+    box.classList.remove('loading');
+    box.appendChild(fr);
+  }catch(e){
+    console.error(e);
+    if(viewKey === key) box.outerHTML = `<p class="note">HTML taqdimotni ochib bo'lmadi. "yuklab olish" tugmasidan foydalaning.</p>`;
+  }
 }
 
 /* ---- Own slide viewer for PDF: renders each page at the screen's real pixel density ---- */
@@ -444,7 +476,7 @@ const redraw = () => { clearTimeout(resizeT); resizeT = setTimeout(drawSlide, 15
 window.addEventListener('resize', redraw);
 document.addEventListener('fullscreenchange', redraw);
 function currentView(){
-  const m = location.hash.match(/^#korish\/([\w-]+)\/(pdf|pptx)$/);
+  const m = location.hash.match(/^#korish\/([\w-]+)\/(pdf|pptx|html)$/);
   return m ? {id: m[1], kind: m[2]} : null;
 }
 function currentGroup(){
@@ -493,7 +525,9 @@ async function autoCovers(){
   for(const p of todo){
     coverTried.add(p.id);
     try{
-      const f = (p.files || []).find(x => x.kind === 'pdf') || p.files[0];
+      // covers come from a PDF page or the PPTX thumbnail; HTML keeps the placeholder
+      const f = (p.files || []).find(x => x.kind === 'pdf') || (p.files || []).find(x => x.kind === 'pptx');
+      if(!f) continue;
       const r = await fetch(publicUrl(f.path));
       if(!r.ok) continue;
       const blob = await makeCover({[f.kind]: await r.blob()});
@@ -520,7 +554,7 @@ async function checkAdmin(){
 
 function checkFile(kind, f){
   if(!f) return null;
-  if(ext(f.name) !== kind) return f.name + ": faqat ." + kind + " fayl qabul qilinadi.";
+  if(!KIND_EXT[kind].includes(ext(f.name))) return f.name + ": faqat ." + KIND_EXT[kind].join(' yoki .') + " fayl qabul qilinadi.";
   if(f.size > MAX_BYTES) return f.name + " hajmi 20 MB dan katta (" + mb(f.size) + ").";
   return null;
 }
@@ -530,6 +564,7 @@ async function submitUpload(g){
   const student = document.getElementById('up-student').value.trim();
   const pdf = document.getElementById('up-pdf').files[0];
   const pptx = document.getElementById('up-pptx').files[0];
+  const html = document.getElementById('up-html').files[0];
   const image = document.getElementById('up-img').files[0];
   const topic = canonTopic(document.getElementById('up-topic').value);
   const setMsg = (msg, err, busy) => {
@@ -539,14 +574,14 @@ async function submitUpload(g){
     if(b) b.disabled = !!busy;
   };
   if(!title || !student) return setMsg("Taqdimot nomi va o'quvchi ismini kiriting.", true);
-  if(!pdf && !pptx) return setMsg("PDF yoki PPTX faylni tanlang.", true);
-  const bad = checkFile('pdf', pdf) || checkFile('pptx', pptx);
+  if(!pdf && !pptx && !html) return setMsg("PDF, PPTX yoki HTML faylni tanlang.", true);
+  const bad = checkFile('pdf', pdf) || checkFile('pptx', pptx) || checkFile('html', html);
   if(bad) return setMsg(bad, true);
 
   const files = [];
   let cover = null;
   try{
-    for(const [kind, f] of [['pdf', pdf], ['pptx', pptx]]){
+    for(const [kind, f] of [['pdf', pdf], ['pptx', pptx], ['html', html]]){
       if(!f) continue;
       setMsg(f.name + " yuklanmoqda…", false, true);
       const path = `${g}/${uid()}.${kind}`;
