@@ -9,6 +9,7 @@ const q = document.getElementById('q');
 const authEl = document.getElementById('auth');
 const cfg = window.TAQDIMOT_CONFIG || {};
 const BUCKET = cfg.bucket || 'taqdimotlar';
+const BOT = String(cfg.telegramBot || '').replace(/^@/, '');
 
 let sb = null;           // Supabase client
 let items = [];          // all presentations
@@ -26,6 +27,10 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID()
   : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2,'0')).join(''));
 const ext = name => (String(name).split('.').pop() || '').toLowerCase();
 
+// Downloads go through the Telegram bot: it opens the bot and sends the file there.
+function downloadUrl(p, f){
+  return BOT ? `https://t.me/${BOT}?start=dl_${p.id}_${f.kind}` : publicUrl(f.path, f.name);
+}
 function publicUrl(path, downloadName){
   const opts = downloadName ? {download: downloadName} : undefined;
   return sb.storage.from(BUCKET).getPublicUrl(path, opts).data.publicUrl;
@@ -356,9 +361,9 @@ function viewer(id, kind){
     <p class="lead" style="margin-bottom:16px">${esc(p.student)} · ${esc(p.group)}-guruh</p>
     <div class="viewbar">${tabs}
       <button class="btn ghost" type="button" id="fs">To'liq ekran</button>
-      <a class="btn ghost" href="${esc(publicUrl(f.path, f.name))}">Yuklab olish (${f.kind.toUpperCase()}${f.size ? ', ' + mb(f.size) : ''})</a>
+      <a class="btn ghost" href="${esc(downloadUrl(p, f))}"${BOT ? ' target="_blank" rel="noopener"' : ''}>${BOT ? 'Telegram orqali yuklab olish' : 'Yuklab olish'} (${f.kind.toUpperCase()}${f.size ? ', ' + mb(f.size) : ''})</a>
     </div>
-    ${big ? `<p class="note">Fayl katta (${mb(f.size)}), shuning uchun slaydlar Google orqali ochiladi va biroz sekin yuklanishi mumkin. Ochilmasa${hasPdf ? ' "Slaydlar" tugmasini bosing yoki' : ''} "Yuklab olish" tugmasidan foydalaning.</p>` : ''}
+    ${big ? `<p class="note">Fayl katta (${mb(f.size)}), shuning uchun slaydlar Google orqali ochiladi va biroz sekin yuklanishi mumkin. Ochilmasa${hasPdf ? ' "Slaydlar" tugmasini bosing yoki' : ''} "yuklab olish" tugmasidan foydalaning.</p>` : ''}
     ${f.kind === 'pptx' && !hasPdf ? `<p class="note">Telefonda slaydlar tiniqroq ko'rinishi uchun taqdimotning PDF nusxasini ham yuklang.</p>` : ''}
     ${stage}`;
   document.getElementById('fs').addEventListener('click', () => {
@@ -393,7 +398,7 @@ async function openDeck(url, key){
     await drawSlide();
   }catch(e){
     console.error(e);
-    if(viewKey === key) stage.outerHTML = `<p class="note">Slaydlarni ochib bo'lmadi. "Yuklab olish" tugmasidan foydalaning.</p>`;
+    if(viewKey === key) stage.outerHTML = `<p class="note">Slaydlarni ochib bo'lmadi. "yuklab olish" tugmasidan foydalaning.</p>`;
   }
 }
 async function drawSlide(){

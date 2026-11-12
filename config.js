@@ -4,5 +4,7 @@
 window.TAQDIMOT_CONFIG = {
   supabaseUrl: 'https://puuqfzqqqrceyxnzgzpp.supabase.co',
   supabaseAnonKey: 'sb_publishable_STAaZr4sbaKPUX03XyKN5g_XNsNqmD-',
-  bucket: 'taqdimotlar'
+  bucket: 'taqdimotlar',
+  // "Yuklab olish" tugmasi fayllarni shu Telegram bot orqali beradi (@ belgisisiz)
+  telegramBot: 'taqdimotqabul_bot'
 };

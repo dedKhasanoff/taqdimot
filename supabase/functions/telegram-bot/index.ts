@@ -52,6 +52,13 @@ async function tg(method: string, body: Json): Promise<Json> {
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
 const send = (chat_id: number | string, text: string, extra: Json = {}) =>
   tg("sendMessage", { chat_id, text, parse_mode: "HTML", disable_web_page_preview: true, ...extra });
+// Multipart call, for uploading a file to Telegram
+async function tgForm(method: string, form: FormData): Promise<Json> {
+  const r = await fetch(`${TG_API}/bot${TOKEN}/${method}`, { method: "POST", body: form });
+  const j = await r.json().catch(() => ({ ok: false }));
+  if (!j.ok) console.error("telegram", method, JSON.stringify(j));
+  return j;
+}
 const keyboard = (rows: { text: string; data: string }[][]) => ({
   reply_markup: { inline_keyboard: rows.map((r) => r.map((b) => ({ text: b.text, callback_data: b.data }))) },
 });
@@ -196,7 +203,7 @@ async function save(chat: number, data: Data) {
   const g = data.group!;
   const uploaded: string[] = [];
   try {
-    const files: { kind: string; path: string; name: string; size: number }[] = [];
+    const files: StoredFile[] = [];
     let cover: string | null = null;
     for (const kind of ["pdf", "pptx"] as const) {
       const ref = data.files?.[kind];
@@ -206,7 +213,7 @@ async function save(chat: number, data: Data) {
       const { error } = await sb.storage.from(BUCKET).upload(path, bytes, { contentType: MIME[kind], upsert: false });
       if (error) throw error;
       uploaded.push(path);
-      files.push({ kind, path, name: ref.name, size: bytes.length });
+      files.push({ kind, path, name: ref.name, size: bytes.length, tg_file_id: ref.file_id });
       if (kind === "pptx") {
         const thumb = await pptxThumb(bytes);
         if (thumb) {
@@ -244,6 +251,46 @@ async function save(chat: number, data: Data) {
   }
 }
 
+/* ---------- Downloads: site button → t.me/<bot>?start=dl_<id>_<kind> ---------- */
+type StoredFile = { kind: string; path: string; name: string; size: number; tg_file_id?: string };
+async function sendPresentation(chat: number, id: string, kind: string) {
+  const { data: p } = await sb.from("presentations")
+    .select("id, title, student, group, topic, files").eq("id", id).maybeSingle();
+  const files = (p?.files ?? []) as StoredFile[];
+  const f = files.find((x) => x.kind === kind) ?? files[0];
+  if (!p || !f) return send(chat, "Bu taqdimot topilmadi yoki o'chirilgan." + (SITE ? `\n\n${SITE}` : ""));
+
+  await tg("sendChatAction", { chat_id: chat, action: "upload_document" });
+  const link = SITE ? `${SITE}/#korish/${p.id}/${f.kind}` : "";
+  const caption = `<b>${esc(p.title)}</b>\n${esc(p.student)} · ${esc(p.group)}-guruh` +
+    (p.topic ? ` · ${esc(p.topic)}` : "") + (link ? `\n\n<a href="${link}">Saytda ko'rish</a>` : "");
+
+  // Fast path: Telegram already has this file
+  if (f.tg_file_id) {
+    const r = await tg("sendDocument", { chat_id: chat, document: f.tg_file_id, caption, parse_mode: "HTML" });
+    if (r.ok) return;
+  }
+  // First time: take it from storage, upload to Telegram, remember Telegram's file_id
+  const { data: blob, error } = await sb.storage.from(BUCKET).download(f.path);
+  if (error || !blob) {
+    console.error("download", error);
+    return send(chat, "Faylni olib bo'lmadi. Birozdan keyin qayta urinib ko'ring.");
+  }
+  const form = new FormData();
+  form.append("chat_id", String(chat));
+  form.append("caption", caption);
+  form.append("parse_mode", "HTML");
+  form.append("document", new File([blob], f.name || `taqdimot.${f.kind}`, { type: MIME[f.kind] ?? "application/octet-stream" }));
+  const r = await tgForm("sendDocument", form) as { ok: boolean; result?: { document?: { file_id?: string } } };
+  if (!r.ok) return send(chat, "Faylni yuborib bo'lmadi. Birozdan keyin qayta urinib ko'ring.");
+  const fileId = r.result?.document?.file_id;
+  if (fileId) {
+    const next = files.map((x) => x === f ? { ...x, tg_file_id: fileId } : x);
+    const { error: ue } = await sb.from("presentations").update({ files: next }).eq("id", p.id);
+    if (ue) console.error("save file_id", ue);
+  }
+}
+
 /* ---------- Update router ---------- */
 async function onMessage(msg: Json) {
   const chat = (msg.chat as Json).id as number;
@@ -251,6 +298,10 @@ async function onMessage(msg: Json) {
   const text = String(msg.text ?? "").trim();
   const cmd = text.startsWith("/") ? text.split(/[\s@]/)[0].toLowerCase() : "";
 
+  if (cmd === "/start") {
+    const dl = (text.split(/\s+/)[1] ?? "").match(/^dl_([0-9a-f-]{36})_(pdf|pptx)$/i);
+    if (dl) return sendPresentation(chat, dl[1].toLowerCase(), dl[2].toLowerCase());
+  }
   if (cmd === "/start" || cmd === "/yangi") return askGroup(chat);
   if (cmd === "/bekor" || cmd === "/cancel") {
     await setSession(chat, "idle", {});
