@@ -30,6 +30,10 @@ const byGroup = g => items.filter(p => p.group === g);
 const mb = n => (n / 1048576).toFixed(1) + ' MB';
 const uid = () => (crypto.randomUUID ? crypto.randomUUID()
   : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2,'0')).join(''));
+// One spelling for comparing text: fancy Unicode letters (𝚑𝚞𝚓…) become plain,
+// all apostrophe shapes become ', and Õ (often typed for O') becomes o'.
+const norm = s => String(s || '').normalize('NFKC').toLocaleLowerCase('uz')
+  .replace(/[ʻʼ’‘`´]/g, "'").replace(/õ/g, "o'").replace(/\s+/g, ' ').trim();
 const ext = name => (String(name).split('.').pop() || '').toLowerCase();
 
 // Downloads go through the Telegram bot: it opens the bot and sends the file there.
@@ -115,8 +119,10 @@ function fileLinks(p){
 }
 /* ---- Topics ---- */
 const NO_TOPIC = '~';
-const topicOf = p => (p.topic || '').trim();
-const topicKey = t => t.toLocaleLowerCase('uz');
+const OTHER = 'boshqa';
+// A topic literally called "Boshqa" goes into the same bucket as presentations without a topic
+const topicOf = p => { const t = (p.topic || '').trim(); return norm(t) === OTHER ? '' : t; };
+const topicKey = t => norm(t);
 const topicHash = t => '#mavzu/' + (t ? encodeURIComponent(t) : NO_TOPIC);
 // Unique topics, most used first; spelling of the first one seen wins.
 function topicsList(){
@@ -172,7 +178,7 @@ function renderAuth(){
 }
 
 function home(){
-  const term = q.value.trim().toLowerCase();
+  const term = norm(q.value);
   if(term) return search(term);
   const topics = topicSections();
   app.innerHTML = `
@@ -212,7 +218,7 @@ const created = p => Date.parse(p.created_at) || 0;
 const UZ_ORDER = ['a','b','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','x','y','z',"o'","g'",'sh','ch'];
 const UZ_RANK = new Map(UZ_ORDER.map((l, i) => [l, i + 1]));
 function uzKey(str){
-  const t = String(str || '').toLocaleLowerCase('uz').replace(/[ʻʼ’‘`´]/g, "'");
+  const t = norm(str);
   const key = [];
   for(let i = 0; i < t.length; i++){
     const two = t.slice(i, i + 2);
@@ -256,7 +262,7 @@ function topicPage(t){
   const list = sorted(byTopic(t));
   app.innerHTML = `
     <a class="back" href="#">← Bosh sahifa</a>
-    <h1>${esc(t || 'Boshqa')}</h1>` + listHead(plural(list.length), t ? '' : ' · mavzusi belgilanmagan') + banner() +
+    <h1>${esc(t || 'Boshqa')}</h1>` + listHead(plural(list.length)) + banner() +
     (list.length ? `<div class="list">${list.map(p => presCard(p, true)).join('')}</div>`
                  : (dbState === 'ok' ? `<div class="empty">Bu mavzuda hali taqdimot yo'q.</div>` : ''));
 }
@@ -296,7 +302,7 @@ function group(g){
   if(f) f.addEventListener('submit', e => { e.preventDefault(); submitUpload(g); });
 }
 function search(term){
-  const hits = sorted(items.filter(p => (p.title + ' ' + p.student + ' ' + p.group + ' ' + topicOf(p)).toLowerCase().includes(term)));
+  const hits = sorted(items.filter(p => norm(p.title + ' ' + p.student + ' ' + p.group + ' ' + topicOf(p)).includes(term)));
   app.innerHTML = `<h1>Qidiruv natijalari</h1>` + listHead(hits.length + ' ta topildi') +
     (hits.length ? `<div class="list">${hits.map(p => presCard(p, true)).join('')}</div>`
                  : `<div class="empty">Hech narsa topilmadi. Boshqa so'z bilan urinib ko'ring.</div>`);
