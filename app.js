@@ -195,12 +195,58 @@ function topicSections(){
     }).join('')}
   </section>`;
 }
+/* ---- Sorting ---- */
+const totalSize = p => (p.files || []).reduce((n, f) => n + (Number(f.size) || 0), 0);
+const created = p => Date.parse(p.created_at) || 0;
+// Uzbek alphabet order, as in school registers: A B D E … X Y Z O' G' Sh Ch.
+const UZ_ORDER = ['a','b','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','x','y','z',"o'","g'",'sh','ch'];
+const UZ_RANK = new Map(UZ_ORDER.map((l, i) => [l, i + 1]));
+function uzKey(str){
+  const t = String(str || '').toLocaleLowerCase('uz').replace(/[ʻʼ’‘`´]/g, "'");
+  const key = [];
+  for(let i = 0; i < t.length; i++){
+    const two = t.slice(i, i + 2);
+    if(UZ_RANK.has(two)){ key.push(UZ_RANK.get(two)); i++; continue; }
+    const c = t[i];
+    if(c === "'" || c === '"') continue;        // tutuq belgisi (ma'no) doesn't change order
+    if(/\s/.test(c)){ key.push(0); continue; }   // shorter word first: "Ali" before "Ali Valiyev"
+    if(/\d/.test(c)){ key.push(-100 + Number(c)); continue; } // numbers before letters
+    key.push(UZ_RANK.get(c) ?? 1000 + c.codePointAt(0)); // other letters (c, w, Cyrillic…) after
+  }
+  return key;
+}
+function abc(a, b){
+  const x = uzKey(a), y = uzKey(b);
+  for(let i = 0; i < Math.min(x.length, y.length); i++) if(x[i] !== y[i]) return x[i] - y[i];
+  return x.length - y.length || String(a || '').localeCompare(String(b || ''), 'uz');
+}
+const SORTS = {
+  new:        {label: "Eng yangi",               fn: (a, b) => created(b) - created(a)},
+  old:        {label: "Eng eski",                fn: (a, b) => created(a) - created(b)},
+  title:      {label: "Nomi: A → Z",             fn: (a, b) => abc(a.title, b.title)},
+  titleDesc:  {label: "Nomi: Z → A",             fn: (a, b) => abc(b.title, a.title)},
+  student:    {label: "O'quvchi ismi: A → Z",    fn: (a, b) => abc(a.student, b.student)},
+  studentDesc:{label: "O'quvchi ismi: Z → A",    fn: (a, b) => abc(b.student, a.student)},
+  big:        {label: "Hajmi: kattasi oldin",    fn: (a, b) => totalSize(b) - totalSize(a)},
+  small:      {label: "Hajmi: kichigi oldin",    fn: (a, b) => totalSize(a) - totalSize(b)},
+  group:      {label: "Guruh raqami bo'yicha",   fn: (a, b) => abc(a.group, b.group) || created(b) - created(a)}
+};
+let sortKey = 'new';
+try{ const k = localStorage.getItem('sort'); if(k && SORTS[k]) sortKey = k; }catch(_){}
+// ties fall back to newest first, so the order never jumps around
+const sorted = list => list.slice().sort((a, b) => SORTS[sortKey].fn(a, b) || created(b) - created(a));
+function listHead(count, extra){
+  return `<div class="listhead"><p class="lead">${count}${extra || ''}</p>
+    <label class="sortbar">Tartiblash
+      <select id="sort">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}"${k === sortKey ? ' selected' : ''}>${v.label}</option>`).join('')}</select>
+    </label></div>`;
+}
+
 function topicPage(t){
-  const list = byTopic(t);
+  const list = sorted(byTopic(t));
   app.innerHTML = `
     <a class="back" href="#">← Bosh sahifa</a>
-    <h1>${esc(t || 'Boshqa')}</h1>
-    <p class="lead">${plural(list.length)}${t ? '' : ' · mavzusi belgilanmagan'}</p>` + banner() +
+    <h1>${esc(t || 'Boshqa')}</h1>` + listHead(plural(list.length), t ? '' : ' · mavzusi belgilanmagan') + banner() +
     (list.length ? `<div class="list">${list.map(p => presCard(p, true)).join('')}</div>`
                  : (dbState === 'ok' ? `<div class="empty">Bu mavzuda hali taqdimot yo'q.</div>` : ''));
 }
@@ -228,11 +274,10 @@ function uploadForm(g){
   </form>`;
 }
 function group(g){
-  const list = byGroup(g);
+  const list = sorted(byGroup(g));
   app.innerHTML = `
     <a class="back" href="#">← Barcha guruhlar</a>
-    <h1>${g}-guruh</h1>
-    <p class="lead">${plural(list.length)}</p>` + banner() +
+    <h1>${g}-guruh</h1>` + listHead(plural(list.length)) + banner() +
     (list.length ? `<div class="list">${list.map(p => presCard(p)).join('')}</div>`
                  : (dbState === 'ok' ? `<div class="empty">Bu guruhdan hali taqdimot qo'shilmagan.</div>` : '')) +
     (isAdmin ? uploadForm(g) : '');
@@ -240,8 +285,8 @@ function group(g){
   if(f) f.addEventListener('submit', e => { e.preventDefault(); submitUpload(g); });
 }
 function search(term){
-  const hits = items.filter(p => (p.title + ' ' + p.student + ' ' + p.group + ' ' + topicOf(p)).toLowerCase().includes(term));
-  app.innerHTML = `<h1>Qidiruv natijalari</h1><p class="lead">${hits.length} ta topildi</p>` +
+  const hits = sorted(items.filter(p => (p.title + ' ' + p.student + ' ' + p.group + ' ' + topicOf(p)).toLowerCase().includes(term)));
+  app.innerHTML = `<h1>Qidiruv natijalari</h1>` + listHead(hits.length + ' ta topildi') +
     (hits.length ? `<div class="list">${hits.map(p => presCard(p, true)).join('')}</div>`
                  : `<div class="empty">Hech narsa topilmadi. Boshqa so'z bilan urinib ko'ring.</div>`);
 }
@@ -586,6 +631,16 @@ app.addEventListener('click', e => {
     picker.onchange = () => { if(picker.files[0]) setCover(id, b, picker.files[0]); picker.value = ''; };
     picker.click();
   } else setCover(id, b);
+});
+
+app.addEventListener('change', e => {
+  if(e.target.id !== 'sort' || !SORTS[e.target.value]) return;
+  sortKey = e.target.value;
+  try{ localStorage.setItem('sort', sortKey); }catch(_){}
+  const y = window.scrollY;
+  if(q.value.trim()) home(); else route();
+  window.scrollTo(0, y);
+  const sel = document.getElementById('sort'); if(sel) sel.focus();
 });
 
 q.addEventListener('input', () => { if(location.hash) history.replaceState(null,'',location.pathname); home(); });
