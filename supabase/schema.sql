@@ -72,6 +72,15 @@ drop policy if exists "files_select_admin" on storage.objects;
 create policy "files_select_admin" on storage.objects
   for select to authenticated using (bucket_id = 'taqdimotlar' and public.is_admin());
 
--- 4. O'zingizni admin qilish (Authentication → Users'da foydalanuvchi yaratgandan keyin):
+-- 4. Telegram bot suhbat holati (faqat service kalit bilan ishlaydi)
+create table if not exists public.bot_sessions (
+  chat_id bigint primary key,
+  step text not null default 'idle',
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.bot_sessions enable row level security;
+
+-- 5. O'zingizni admin qilish (Authentication → Users'da foydalanuvchi yaratgandan keyin):
 -- insert into public.admins (user_id)
 --   select id from auth.users where email = 'sizning@email.uz';

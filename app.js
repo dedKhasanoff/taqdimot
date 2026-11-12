@@ -427,6 +427,35 @@ async function loadItems(){
   if(error){ dbState = 'error'; console.error(error); }
   else { items = data; dbState = 'ok'; }
   refresh();
+  if(isAdmin) autoCovers();
+}
+
+// Presentations sent through the Telegram bot as PDF only have no cover yet.
+// When an admin has the site open, make them from the first page in the background.
+const coverTried = new Set();
+let coverBusy = false;
+async function autoCovers(){
+  if(coverBusy || !sb) return;
+  const todo = items.filter(p => !p.cover && !coverTried.has(p.id) && (p.files || []).length).slice(0, 5);
+  if(!todo.length) return;
+  coverBusy = true;
+  let changed = false;
+  for(const p of todo){
+    coverTried.add(p.id);
+    try{
+      const f = (p.files || []).find(x => x.kind === 'pdf') || p.files[0];
+      const r = await fetch(publicUrl(f.path));
+      if(!r.ok) continue;
+      const blob = await makeCover({[f.kind]: await r.blob()});
+      if(!blob) continue;
+      const path = await uploadCover(p.group, blob);
+      const { error } = await sb.from('presentations').update({cover: path}).eq('id', p.id);
+      if(error){ await sb.storage.from(BUCKET).remove([path]).catch(() => {}); continue; }
+      changed = true;
+    }catch(e){ console.warn('auto cover', e); }
+  }
+  coverBusy = false;
+  if(changed) await loadItems();
 }
 
 async function checkAdmin(){
@@ -436,6 +465,7 @@ async function checkAdmin(){
     isAdmin = !error && !!data;
   }
   refresh();
+  if(isAdmin) autoCovers();
 }
 
 function checkFile(kind, f){

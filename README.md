@@ -19,6 +19,8 @@
 | `supabase/02_cover.sql` | Muqova rasmlari uchun yangilanish (eski bazalar uchun) |
 | `supabase/03_topic.sql` | Mavzular uchun yangilanish (eski bazalar uchun) |
 | `netlify.toml` | Netlify sozlamasi |
+| `supabase/functions/telegram-bot/index.ts` | Telegram bot (Supabase Edge Function) |
+| `supabase/04_bot.sql` | Bot uchun jadval (eski bazalar uchun) |
 
 ## O'rnatish
 
@@ -41,6 +43,26 @@
 
 ### 3. Foydalanish
 Saytda o'ng yuqoridagi **Kirish** tugmasi orqali admin sifatida kiring. Guruh kartasini oching, pastda yuklash formasi chiqadi.
+
+## Telegram bot
+O'quvchilar taqdimotni Telegram bot orqali yuboradi, u saytga darhol chiqadi.
+Botda: `/start` → guruh → mavzu → nom → ism → PDF/PPTX fayl (20 MB gacha). Yangi taqdimot haqida adminga xabar keladi.
+
+1. **Bot yaratish**: Telegram'da @BotFather → `/newbot` → nom va username bering → **token**ni saqlang.
+2. **Jadval**: Supabase SQL Editor'da `supabase/04_bot.sql` ni ishga tushiring.
+3. **Funksiya**: Supabase → **Edge Functions → Deploy a new function → Via Editor**. Nomi aynan `telegram-bot`.
+   `supabase/functions/telegram-bot/index.ts` ichidagi kodni qo'yib **Deploy** bosing.
+4. **JWT tekshiruvini o'chirish**: funksiya sahifasi → **Details/Settings** → *Verify JWT* (yoki *Enforce JWT verification*) ni o'chirib saqlang.
+   Telegram JWT yubormaydi; himoyani maxfiy so'z beradi.
+5. **Secrets** (Edge Functions → Secrets):
+   - `TELEGRAM_BOT_TOKEN`: BotFather bergan token
+   - `TELEGRAM_WEBHOOK_SECRET`: o'zingiz o'ylab topgan uzun so'z (faqat harf, raqam, `_`, `-`)
+   - `SITE_URL`: `https://taqdimo.netlify.app`
+   - `ADMIN_CHAT_ID`: (ixtiyoriy) botga `/myid` yozib olingan raqam
+6. **Ulash**: brauzerda oching: `https://<loyiha>.supabase.co/functions/v1/telegram-bot?setup=<TELEGRAM_WEBHOOK_SECRET>`.
+   "Tayyor! Bot @... ulandi" chiqishi kerak.
+
+Faqat PDF yuborilgan taqdimotlarning muqova rasmi admin saytga kirganda avtomatik yaratiladi.
 
 ## Ma'lumot modeli
 Jadval `presentations`:
