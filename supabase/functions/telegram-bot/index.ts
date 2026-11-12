@@ -364,4 +364,5 @@ export async function handle(req: Request): Promise<Response> {
   return new Response("ok");
 }
 
-if (import.meta.main) Deno.serve(handle);
+// BOT_TEST lets tests import handle() without starting a server
+if (!Deno.env.get("BOT_TEST")) Deno.serve(handle);
