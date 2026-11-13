@@ -66,6 +66,8 @@ Botda: `/start` → guruh → mavzu → nom → ism → PDF/PPTX/HTML fayl (20 M
 
 **PDF → JPEG:** botga PDF yuborilsa (yoki `/jpg`), "🖼 JPEG'ga aylantirish" tugmasi chiqadi. U `pdf.html` Mini App'ni ochadi: sahifalar foydalanuvchi telefonida rasmga aylanadi (Edge Function'da CPU vaqti yetmaydi), bot ularni chatga yuboradi. Mini App so'rovlari Telegram `initData` imzosi bilan tekshiriladi.
 
+**E'lon:** admin (`ADMIN_CHAT_ID`) botga `/elon` yozadi, keyin e'lonni (matn, rasm, video) yuboradi; bot qanday ko'rinishini ko'rsatadi va "Yuborish" bosilgach botdan foydalangan hammaga yuboradi, oxirida hisobot beradi.
+
 Faqat PDF yuborilgan taqdimotlarning muqova rasmi admin saytga kirganda avtomatik yaratiladi.
 
 ## Ma'lumot modeli

@@ -76,6 +76,7 @@ type Data = {
   group?: string; topic?: string | null; topics?: string[];
   title?: string; student?: string;
   files?: Partial<Record<Kind, FileRef>>;
+  bmsg?: number; // admin's announcement message waiting for confirmation
 };
 type Session = { step: string; data: Data };
 
@@ -389,6 +390,38 @@ async function webApp(req: Request, action: string): Promise<Response> {
   return cors("not found", { status: 404 });
 }
 
+/* ---------- Announcements (admin only): /elon ---------- */
+const isAdmin = (chat: number) => ADMIN_CHAT !== "" && String(chat) === ADMIN_CHAT;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Everyone who has ever written to the bot has a row in bot_sessions
+async function recipients(): Promise<number[]> {
+  const ids: number[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from("bot_sessions").select("chat_id").order("chat_id").range(from, from + 999);
+    if (error) { console.error("recipients", error); break; }
+    ids.push(...(data ?? []).map((r) => Number(r.chat_id)));
+    if (!data || data.length < 1000) break;
+  }
+  return ids;
+}
+async function broadcast(admin: number, messageId: number) {
+  const ids = (await recipients()).filter((id) => id !== admin);
+  let ok = 0, failed = 0;
+  for (const id of ids) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const r = await tg("copyMessage", { chat_id: id, from_chat_id: admin, message_id: messageId }) as
+        { ok: boolean; parameters?: { retry_after?: number } };
+      if (r.ok) { ok++; break; }
+      const wait = r.parameters?.retry_after;
+      if (wait && attempt < 2) { await sleep(wait * 1000); continue; } // Telegram asked us to slow down
+      failed++; break; // user blocked the bot, deleted account, …
+    }
+    await sleep(40); // stay under Telegram's ~30 messages per second
+  }
+  await setSession(admin, "idle", {});
+  await send(admin, `📣 E'lon yuborildi.\n✅ Yetkazildi: ${ok}\n❌ Yetkazilmadi: ${failed} (botni bloklaganlar)`);
+}
+
 /* ---------- Update router ---------- */
 async function onMessage(msg: Json) {
   const chat = (msg.chat as Json).id as number;
@@ -406,6 +439,10 @@ async function onMessage(msg: Json) {
     return send(chat, "Bekor qilindi. Qaytadan boshlash uchun /start ni bosing.");
   }
   if (cmd === "/myid") return send(chat, `Sizning chat ID: <code>${chat}</code>`);
+  if (cmd === "/elon" && isAdmin(chat)) {
+    await setSession(chat, "broadcast", {});
+    return send(chat, "📣 E'lon matnini yuboring. Rasm, video yoki fayl bilan ham bo'ladi.\nBekor qilish: /bekor");
+  }
   if (cmd === "/jpg") {
     await setSession(chat, "idle", {});
     return send(chat, "PDF faylni yuboring, men uni sahifama-sahifa JPEG rasmlarga aylantirib beraman.");
@@ -415,6 +452,14 @@ async function onMessage(msg: Json) {
   }
 
   const s = await getSession(chat);
+  if (s.step === "broadcast" && isAdmin(chat)) { // this message is the announcement: show how it will look
+    await setSession(chat, "broadcast_confirm", { bmsg: msg.message_id as number });
+    const n = (await recipients()).filter((id) => id !== chat).length;
+    await send(chat, "👇 Foydalanuvchilar shunday ko'radi:");
+    await tg("copyMessage", { chat_id: chat, from_chat_id: chat, message_id: msg.message_id });
+    return send(chat, `Hammaga yuborilsinmi? (${n} kishi)`,
+      keyboard([[{ text: `✅ Yuborish (${n})`, data: "bc:yes" }, { text: "❌ Bekor", data: "bc:no" }]]));
+  }
   if (msg.document) return onDocument(chat, s, msg.document as Json);
   if (s.step === "saving") return send(chat, "⏳ Taqdimot saqlanmoqda, biroz kuting…");
   if (!text || cmd) {
@@ -469,6 +514,20 @@ async function onCallback(cq: Json) {
     await closeKeyboard(`<b>2/5.</b> Mavzu: <b>${esc(data.topic ?? "Mavzusiz")}</b>`);
     return askTitle(chat, data);
   }
+  if (value.startsWith("bc:") && s.step === "broadcast_confirm" && isAdmin(chat) && data.bmsg) {
+    if (value === "bc:no") {
+      await setSession(chat, "idle", {});
+      return closeKeyboard("E'lon bekor qilindi.");
+    }
+    await setSession(chat, "broadcasting", {}); // a second tap does nothing
+    await closeKeyboard("📣 E'lon yuborilmoqda… Tugagach hisobot keladi.");
+    const work = broadcast(chat, data.bmsg);
+    // deno-lint-ignore no-explicit-any
+    const rt = (globalThis as any).EdgeRuntime;
+    if (rt?.waitUntil) rt.waitUntil(work); else await work;
+    return;
+  }
+  if (s.step === "broadcasting") return;
   if (value === "done" && s.step === "files" && KINDS.some((k) => data.files?.[k])) {
     await tg("editMessageReplyMarkup", { chat_id: chat, message_id: msg.message_id, reply_markup: { inline_keyboard: [] } });
     return finish(chat, data);
