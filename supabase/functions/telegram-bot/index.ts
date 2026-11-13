@@ -33,6 +33,9 @@ const MIME: Record<string, string> = {
 // Content type when the file is sent back to a Telegram user
 const SEND_MIME: Record<string, string> = { ...MIME, html: "text/html" };
 const LIMITS = { topic: 80, title: 200, student: 120 };
+// Sent after a presentation is saved, so students learn about the PDF → JPEG feature
+const TIP = "💡 <b>Eslatma:</b> bu bot orqali PDF faylni rasmga (JPEG) aylantirish ham mumkin!\n" +
+  "Istalgan PDF faylni shu yerga yuboring yoki /jpg ni bosing — har bir sahifa alohida rasm bo'lib keladi.";
 
 function serviceKey(): string {
   const k = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -250,6 +253,7 @@ async function save(chat: number, data: Data) {
       `🎉 Taqdimotingiz saytga joylandi!\n\n<b>${esc(data.title)}</b>\n${esc(data.student)} · ${esc(g)}-guruh` +
       (data.topic ? ` · ${esc(data.topic)}` : "") +
       (link ? `\n\n${link}` : "") + "\n\nYana taqdimot yuborish uchun /start ni bosing.");
+    await send(chat, TIP);
     if (ADMIN_CHAT) {
       await send(ADMIN_CHAT,
         `📥 Yangi taqdimot (bot orqali)\n<b>${esc(data.title)}</b>\n${esc(data.student)} · ${esc(g)}-guruh` +
