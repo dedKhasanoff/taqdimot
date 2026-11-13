@@ -1,11 +1,12 @@
-// Telegram bot: o'quvchilardan taqdimot (PDF/PPTX) qabul qiladi va saytga joylaydi.
+// Telegram bot: o'quvchilardan taqdimot (PDF/PPTX/HTML) qabul qiladi va saytga joylaydi,
+// PDF'ni JPEG rasmlarga aylantiradi (pdf.html Mini App orqali), admin /elon bilan e'lon yuboradi.
 // Supabase Edge Function. Sozlash: README.md → "Telegram bot".
 //
 // Kerakli secrets (Edge Functions → Secrets):
 //   TELEGRAM_BOT_TOKEN       BotFather bergan token
 //   TELEGRAM_WEBHOOK_SECRET  o'zingiz o'ylab topgan maxfiy so'z (harf, raqam, _ va -)
 //   SITE_URL                 sayt manzili, masalan https://taqdimo.netlify.app
-//   ADMIN_CHAT_ID            (ixtiyoriy) yangi taqdimotlar haqida xabar boradigan chat id (/myid)
+//   ADMIN_CHAT_ID            admin chat id (/myid): yangi taqdimot xabarlari va /elon uchun
 // SUPABASE_URL va service kalit Supabase tomonidan avtomatik beriladi.
 
 import { createClient } from "npm:@supabase/supabase-js@2.93.3";
@@ -76,7 +77,8 @@ type Data = {
   group?: string; topic?: string | null; topics?: string[];
   title?: string; student?: string;
   files?: Partial<Record<Kind, FileRef>>;
-  bmsg?: number; // admin's announcement message waiting for confirmation
+  bmsg?: number;  // admin's announcement message waiting for confirmation
+  btext?: string; // …or its text, when written right after /elon in one message
 };
 type Session = { step: string; data: Data };
 
@@ -404,12 +406,13 @@ async function recipients(): Promise<number[]> {
   }
   return ids;
 }
-async function broadcast(admin: number, messageId: number) {
+async function broadcast(admin: number, messageId?: number, text?: string) {
   const ids = (await recipients()).filter((id) => id !== admin);
   let ok = 0, failed = 0;
   for (const id of ids) {
     for (let attempt = 0; attempt < 3; attempt++) {
-      const r = await tg("copyMessage", { chat_id: id, from_chat_id: admin, message_id: messageId }) as
+      const r = await (text ? tg("sendMessage", { chat_id: id, text, disable_web_page_preview: true })
+        : tg("copyMessage", { chat_id: id, from_chat_id: admin, message_id: messageId })) as
         { ok: boolean; parameters?: { retry_after?: number } };
       if (r.ok) { ok++; break; }
       const wait = r.parameters?.retry_after;
@@ -420,6 +423,17 @@ async function broadcast(admin: number, messageId: number) {
   }
   await setSession(admin, "idle", {});
   await send(admin, `📣 E'lon yuborildi.\n✅ Yetkazildi: ${ok}\n❌ Yetkazilmadi: ${failed} (botni bloklaganlar)`);
+}
+
+// Show the admin how the announcement will look, then ask before sending it to everyone
+async function confirmBroadcast(chat: number, data: Data) {
+  await setSession(chat, "broadcast_confirm", data);
+  const n = (await recipients()).filter((id) => id !== chat).length;
+  await send(chat, "👇 Foydalanuvchilar shunday ko'radi:");
+  if (data.btext) await tg("sendMessage", { chat_id: chat, text: data.btext, disable_web_page_preview: true });
+  else await tg("copyMessage", { chat_id: chat, from_chat_id: chat, message_id: data.bmsg });
+  return send(chat, `Hammaga yuborilsinmi? (${n} kishi)`,
+    keyboard([[{ text: `✅ Yuborish (${n})`, data: "bc:yes" }, { text: "❌ Bekor", data: "bc:no" }]]));
 }
 
 /* ---------- Update router ---------- */
@@ -439,7 +453,10 @@ async function onMessage(msg: Json) {
     return send(chat, "Bekor qilindi. Qaytadan boshlash uchun /start ni bosing.");
   }
   if (cmd === "/myid") return send(chat, `Sizning chat ID: <code>${chat}</code>`);
-  if (cmd === "/elon" && isAdmin(chat)) {
+  if (cmd === "/elon") {
+    if (!isAdmin(chat)) return send(chat, "Bu buyruq faqat admin uchun.");
+    const rest = text.replace(/^\/elon(@\w+)?\s*/i, "").trim();
+    if (rest) return confirmBroadcast(chat, { btext: rest }); // "/elon <text>" in one message
     await setSession(chat, "broadcast", {});
     return send(chat, "📣 E'lon matnini yuboring. Rasm, video yoki fayl bilan ham bo'ladi.\nBekor qilish: /bekor");
   }
@@ -452,13 +469,8 @@ async function onMessage(msg: Json) {
   }
 
   const s = await getSession(chat);
-  if (s.step === "broadcast" && isAdmin(chat)) { // this message is the announcement: show how it will look
-    await setSession(chat, "broadcast_confirm", { bmsg: msg.message_id as number });
-    const n = (await recipients()).filter((id) => id !== chat).length;
-    await send(chat, "👇 Foydalanuvchilar shunday ko'radi:");
-    await tg("copyMessage", { chat_id: chat, from_chat_id: chat, message_id: msg.message_id });
-    return send(chat, `Hammaga yuborilsinmi? (${n} kishi)`,
-      keyboard([[{ text: `✅ Yuborish (${n})`, data: "bc:yes" }, { text: "❌ Bekor", data: "bc:no" }]]));
+  if (s.step === "broadcast" && isAdmin(chat)) { // this message is the announcement
+    return confirmBroadcast(chat, { bmsg: msg.message_id as number });
   }
   if (msg.document) return onDocument(chat, s, msg.document as Json);
   if (s.step === "saving") return send(chat, "⏳ Taqdimot saqlanmoqda, biroz kuting…");
@@ -514,14 +526,14 @@ async function onCallback(cq: Json) {
     await closeKeyboard(`<b>2/5.</b> Mavzu: <b>${esc(data.topic ?? "Mavzusiz")}</b>`);
     return askTitle(chat, data);
   }
-  if (value.startsWith("bc:") && s.step === "broadcast_confirm" && isAdmin(chat) && data.bmsg) {
+  if (value.startsWith("bc:") && s.step === "broadcast_confirm" && isAdmin(chat) && (data.bmsg || data.btext)) {
     if (value === "bc:no") {
       await setSession(chat, "idle", {});
       return closeKeyboard("E'lon bekor qilindi.");
     }
     await setSession(chat, "broadcasting", {}); // a second tap does nothing
     await closeKeyboard("📣 E'lon yuborilmoqda… Tugagach hisobot keladi.");
-    const work = broadcast(chat, data.bmsg);
+    const work = broadcast(chat, data.bmsg, data.btext);
     // deno-lint-ignore no-explicit-any
     const rt = (globalThis as any).EdgeRuntime;
     if (rt?.waitUntil) rt.waitUntil(work); else await work;
