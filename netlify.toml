@@ -6,6 +6,17 @@
   [headers.values]
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+
+# The main site must not be framed (protects the admin login).
+# pdf.html is left out: Telegram Web opens Mini Apps inside a frame.
+[[headers]]
+  for = "/"
+  [headers.values]
+    X-Frame-Options = "DENY"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
     X-Frame-Options = "DENY"
 
 [[headers]]

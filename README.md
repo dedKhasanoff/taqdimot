@@ -18,6 +18,7 @@
 | `supabase/schema.sql` | Jadval, admin ro'yxati, ruxsat qoidalari, fayl ombori |
 | `supabase/02_cover.sql` | Muqova rasmlari uchun yangilanish (eski bazalar uchun) |
 | `supabase/03_topic.sql` | Mavzular uchun yangilanish (eski bazalar uchun) |
+| `pdf.html` | Telegram Mini App: PDF'ni JPEG rasmlarga aylantiradi |
 | `netlify.toml` | Netlify sozlamasi |
 | `supabase/functions/telegram-bot/index.ts` | Telegram bot (Supabase Edge Function) |
 | `supabase/04_bot.sql` | Bot uchun jadval (eski bazalar uchun) |
@@ -62,6 +63,8 @@ Botda: `/start` → guruh → mavzu → nom → ism → PDF/PPTX/HTML fayl (20 M
    - `ADMIN_CHAT_ID`: (ixtiyoriy) botga `/myid` yozib olingan raqam
 6. **Ulash**: brauzerda oching: `https://<loyiha>.supabase.co/functions/v1/telegram-bot?setup=<TELEGRAM_WEBHOOK_SECRET>`.
    "Tayyor! Bot @... ulandi" chiqishi kerak.
+
+**PDF → JPEG:** botga PDF yuborilsa (yoki `/jpg`), "🖼 JPEG'ga aylantirish" tugmasi chiqadi. U `pdf.html` Mini App'ni ochadi: sahifalar foydalanuvchi telefonida rasmga aylanadi (Edge Function'da CPU vaqti yetmaydi), bot ularni chatga yuboradi. Mini App so'rovlari Telegram `initData` imzosi bilan tekshiriladi.
 
 Faqat PDF yuborilgan taqdimotlarning muqova rasmi admin saytga kirganda avtomatik yaratiladi.
 

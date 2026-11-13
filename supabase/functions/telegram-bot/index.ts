@@ -153,7 +153,9 @@ function fileKind(doc: Json): Kind | null {
 
 async function onDocument(chat: number, s: Session, doc: Json) {
   if (s.step !== "files") {
-    return send(chat, "Avval taqdimot ma'lumotlarini kiritamiz. Boshlash uchun /start ni bosing.");
+    // Outside the submission flow a PDF means "turn it into pictures"
+    if (fileKind(doc) === "pdf") return offerJpeg(chat, doc);
+    return send(chat, "Taqdimot yuborish uchun /start ni bosing.\nPDF'ni rasmga (JPEG) aylantirish uchun PDF faylni shunchaki yuboring.");
   }
   const kind = fileKind(doc);
   if (!kind) {
@@ -300,6 +302,93 @@ async function sendPresentation(chat: number, id: string, kind: string) {
   }
 }
 
+/* ---------- PDF → JPEG ----------
+   The edge runtime has only ~2 s of CPU per request, too little to render pages.
+   So a Telegram Mini App (pdf.html on the site) renders them on the user's phone;
+   this function only hands it the PDF and posts the finished pictures to the chat. */
+async function offerJpeg(chat: number, doc: Json) {
+  const size = Number(doc.file_size ?? 0);
+  if (size > MAX_BYTES) return send(chat, `PDF juda katta (${(size / 1048576).toFixed(1)} MB). 20 MB gacha bo'lishi kerak.`);
+  if (!SITE) return send(chat, "PDF'ni rasmga aylantirish hozircha sozlanmagan (SITE_URL yo'q).");
+  const url = `${SITE}/pdf.html?f=${encodeURIComponent(String(doc.file_id))}&n=${encodeURIComponent(String(doc.file_name ?? "taqdimot.pdf"))}`;
+  await send(chat, "📄 PDF qabul qilindi. Har bir sahifani JPEG rasmga aylantirish uchun tugmani bosing:", {
+    reply_markup: { inline_keyboard: [[{ text: "🖼 JPEG'ga aylantirish", web_app: { url } }]] },
+  });
+}
+
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-headers": "content-type, x-init-data",
+  "access-control-max-age": "86400",
+};
+const cors = (body: BodyInit | null, init: ResponseInit = {}) =>
+  new Response(body, { ...init, headers: { ...CORS, ...(init.headers ?? {}) } });
+
+const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+async function hmac(key: BufferSource, data: string): Promise<ArrayBuffer> {
+  const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return crypto.subtle.sign("HMAC", k, new TextEncoder().encode(data));
+}
+// Checks the Mini App's initData signature (Telegram docs: "Validating data received via the Mini App").
+// Returns the Telegram user id, or null when the data is missing, forged or older than a day.
+export async function webAppUser(initData: string | null): Promise<number | null> {
+  if (!initData) return null;
+  const params = new URLSearchParams(initData);
+  const hash = params.get("hash");
+  if (!hash) return null;
+  params.delete("hash");
+  const check = [...params.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`).join("\n");
+  const secret = await hmac(new TextEncoder().encode("WebAppData"), TOKEN);
+  if (hex(await hmac(secret, check)) !== hash) return null;
+  const age = Date.now() / 1000 - Number(params.get("auth_date") ?? 0);
+  if (!(age < 86400)) return null;
+  try { return Number(JSON.parse(params.get("user") ?? "{}").id) || null; } catch { return null; }
+}
+
+async function webApp(req: Request, action: string): Promise<Response> {
+  if (req.method === "OPTIONS") return cors(null, { status: 204 });
+  const userId = await webAppUser(req.headers.get("x-init-data"));
+  if (!userId) return cors("Telegram orqali oching", { status: 401 });
+
+  if (action === "pdf") { // hand the Mini App the PDF the user sent to the bot
+    const fileId = new URL(req.url).searchParams.get("f") ?? "";
+    const j = await tg("getFile", { file_id: fileId }) as { ok: boolean; result?: { file_path?: string; file_size?: number } };
+    if (!j.ok || !j.result?.file_path) return cors("Fayl topilmadi. PDF'ni botga qaytadan yuboring.", { status: 404 });
+    if ((j.result.file_size ?? 0) > MAX_BYTES) return cors("Fayl 20 MB dan katta", { status: 413 });
+    const r = await fetch(`${TG_API}/file/bot${TOKEN}/${j.result.file_path}`);
+    if (!r.ok) return cors("Faylni olib bo'lmadi", { status: 502 });
+    return cors(r.body, { headers: { "content-type": "application/pdf" } });
+  }
+
+  if (action === "send" && req.method === "POST") { // post up to 10 finished pictures to the user's chat
+    const form = await req.formData();
+    const mode = form.get("mode") === "document" ? "document" : "photo";
+    const caption = String(form.get("caption") ?? "").slice(0, 1000);
+    const pics = form.getAll("img").filter((x): x is File => x instanceof File).slice(0, 10);
+    if (!pics.length) return cors("Rasm yo'q", { status: 400 });
+    if (pics.some((f) => f.size > 10 * 1024 * 1024)) return cors("Rasm 10 MB dan katta", { status: 413 });
+    const out = new FormData();
+    out.append("chat_id", String(userId));
+    let r: Json;
+    if (pics.length === 1) {
+      out.append(mode, pics[0], pics[0].name);
+      if (caption) out.append("caption", caption);
+      r = await tgForm(mode === "photo" ? "sendPhoto" : "sendDocument", out);
+    } else {
+      out.append("media", JSON.stringify(pics.map((f, i) => ({
+        type: mode, media: `attach://p${i}`, ...(i === 0 && caption ? { caption } : {}),
+      }))));
+      pics.forEach((f, i) => out.append(`p${i}`, f, f.name));
+      r = await tgForm("sendMediaGroup", out);
+    }
+    return r.ok ? cors(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } })
+      : cors(JSON.stringify(r), { status: 502, headers: { "content-type": "application/json" } });
+  }
+  return cors("not found", { status: 404 });
+}
+
 /* ---------- Update router ---------- */
 async function onMessage(msg: Json) {
   const chat = (msg.chat as Json).id as number;
@@ -317,8 +406,12 @@ async function onMessage(msg: Json) {
     return send(chat, "Bekor qilindi. Qaytadan boshlash uchun /start ni bosing.");
   }
   if (cmd === "/myid") return send(chat, `Sizning chat ID: <code>${chat}</code>`);
+  if (cmd === "/jpg") {
+    await setSession(chat, "idle", {});
+    return send(chat, "PDF faylni yuboring, men uni sahifama-sahifa JPEG rasmlarga aylantirib beraman.");
+  }
   if (cmd === "/help" || cmd === "/yordam") {
-    return send(chat, "/start — taqdimot yuborish\n/bekor — bekor qilish" + (SITE ? `\n\nSayt: ${SITE}` : ""));
+    return send(chat, "/start — taqdimot yuborish\n/jpg — PDF'ni JPEG rasmga aylantirish\n/bekor — bekor qilish" + (SITE ? `\n\nSayt: ${SITE}` : ""));
   }
 
   const s = await getSession(chat);
@@ -395,6 +488,7 @@ async function setup(): Promise<Response> {
     commands: [
       { command: "start", description: "Taqdimot yuborish" },
       { command: "bekor", description: "Bekor qilish" },
+      { command: "jpg", description: "PDF'ni JPEG rasmga aylantirish" },
       { command: "myid", description: "Chat ID'ni bilish" },
     ],
   });
@@ -408,6 +502,8 @@ async function setup(): Promise<Response> {
 export async function handle(req: Request): Promise<Response> {
   if (!TOKEN || !SECRET) return new Response("TELEGRAM_BOT_TOKEN va TELEGRAM_WEBHOOK_SECRET sozlanmagan", { status: 500 });
   const u = new URL(req.url);
+  const action = u.searchParams.get("action");
+  if (action) return webApp(req, action); // calls from the PDF → JPEG Mini App
   if (req.method === "GET") {
     if (u.searchParams.get("setup") === SECRET) return setup();
     return new Response("ok");

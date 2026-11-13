@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>PDF → JPEG</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+/* Telegram Mini App: renders every PDF page to a JPEG on the user's device, then the bot posts them to the chat. */
+:root{
+  --bg:#f3f6f9; --surface:#ffffff; --ink:#0f2233; --muted:#5a6e80; --line:#dbe4ec;
+  --accent:#0b6e8a; --accent-ink:#ffffff; --tint:#e3f1f6; --danger:#b3261e;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c1620; --surface:#14222f; --ink:#e8f0f6; --muted:#97aaba; --line:#25384a;
+    --accent:#4fc0dd; --accent-ink:#06202b; --tint:#17303d; --danger:#ff8a80; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c1620; --surface:#14222f; --ink:#e8f0f6; --muted:#97aaba; --line:#25384a;
+  --accent:#4fc0dd; --accent-ink:#06202b; --tint:#17303d; --danger:#ff8a80; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:16px 16px 40px}
+h1{font-size:22px;margin:4px 0 4px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 16px;word-break:break-word}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+.bar{height:8px;border-radius:99px;background:var(--tint);overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.status{color:var(--muted);font-size:15px}
+.status.err{color:var(--danger)}
+.btns{display:grid;gap:10px}
+.btn{display:block;width:100%;padding:13px 16px;border-radius:12px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:600;text-align:center;text-decoration:none;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--accent)}
+.btn[disabled]{opacity:.5;cursor:default}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-top:14px}
+.grid figure{margin:0;background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;position:relative}
+.grid img{display:block;width:100%;height:auto}
+.grid figcaption{position:absolute;right:4px;bottom:4px;background:rgba(15,34,51,.7);color:#fff;font-size:11px;padding:1px 6px;border-radius:99px}
+.grid a{display:block}
+label.pick{display:block;padding:22px;border:2px dashed var(--line);border-radius:12px;text-align:center;color:var(--muted);cursor:pointer}
+label.pick input{display:none}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<h1>PDF → JPEG</h1>
+<p class="sub" id="name">Har bir sahifa alohida rasm bo'ladi</p>
+
+<div class="box" id="pickbox">
+  <label class="pick">📄 PDF faylni tanlang<input type="file" id="pick" accept=".pdf,application/pdf"></label>
+</div>
+
+<div class="box hidden" id="workbox">
+  <div class="status" id="status">Tayyorlanmoqda…</div>
+  <div class="bar"><i id="progress"></i></div>
+  <div class="btns hidden" id="actions">
+    <button class="btn" type="button" id="send-photo">📷 Chatga rasm sifatida yuborish</button>
+    <button class="btn ghost" type="button" id="send-doc">📎 Fayl sifatida yuborish (sifat yo'qolmaydi)</button>
+  </div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script src="config.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+(function(){
+  const MAX_PAGES = 60, LONG_SIDE = 2000, QUALITY = 0.9, BATCH = 10;
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const cfg = window.TAQDIMOT_CONFIG || {};
+  const FN = (cfg.supabaseUrl || '').replace(/\/+$/, '') + '/functions/v1/telegram-bot';
+  // Signed data from Telegram that proves who opened the page (checked by the bot)
+  const initData = (tg && tg.initData) || new URLSearchParams(location.hash.slice(1)).get('tgWebAppData') || '';
+  const inTelegram = !!initData;
+  const qs = new URLSearchParams(location.search);
+  const $ = id => document.getElementById(id);
+  let baseName = 'sahifa', pages = []; // [{blob, url}]
+
+  if(tg){
+    tg.ready(); tg.expand();
+    if(tg.colorScheme) document.documentElement.dataset.theme = tg.colorScheme;
+  }
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  const setStatus = (msg, err) => { $('status').textContent = msg; $('status').className = 'status' + (err ? ' err' : ''); };
+  const setProgress = f => { $('progress').style.width = Math.round(f * 100) + '%'; };
+  const toJpeg = c => new Promise(res => c.toBlob(res, 'image/jpeg', QUALITY));
+  const pad = (n, w) => String(n).padStart(w, '0');
+
+  function nameFrom(n){
+    baseName = String(n || 'sahifa').replace(/\.pdf$/i, '').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'sahifa';
+    $('name').textContent = n || '';
+  }
+
+  async function convert(data){
+    $('pickbox').classList.add('hidden'); $('workbox').classList.remove('hidden');
+    setStatus('PDF ochilmoqda…'); setProgress(0);
+    let pdf;
+    try{ pdf = await pdfjsLib.getDocument({data}).promise; }
+    catch(e){ return setStatus("Bu faylni PDF sifatida ochib bo'lmadi.", true); }
+    const n = Math.min(pdf.numPages, MAX_PAGES), w = String(n).length;
+    for(let i = 1; i <= n; i++){
+      setStatus(`Sahifa ${i} / ${n} rasmga aylantirilmoqda…`);
+      const page = await pdf.getPage(i);
+      const v = page.getViewport({scale: 1});
+      const vp = page.getViewport({scale: LONG_SIDE / Math.max(v.width, v.height)});
+      const c = document.createElement('canvas');
+      c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({canvasContext: ctx, viewport: vp}).promise;
+      const blob = await toJpeg(c);
+      c.width = c.height = 0; // free memory on phones
+      const url = URL.createObjectURL(blob);
+      const fileName = `${baseName}-${pad(i, Math.max(2, w))}.jpg`;
+      pages.push({blob, url, fileName});
+      const fig = document.createElement('figure');
+      fig.innerHTML = inTelegram
+        ? `<img src="${url}" alt="${i}-sahifa"><figcaption>${i}</figcaption>`
+        : `<a href="${url}" download="${fileName}"><img src="${url}" alt="${i}-sahifa"></a><figcaption>${i}</figcaption>`;
+      $('grid').appendChild(fig);
+      setProgress(i / n);
+    }
+    const extra = pdf.numPages > MAX_PAGES ? ` (birinchi ${MAX_PAGES} ta sahifa)` : '';
+    if(inTelegram){
+      setStatus(`✅ ${n} ta rasm tayyor${extra}. Chatga yuboring:`);
+      $('actions').classList.remove('hidden');
+    }else{
+      setStatus(`✅ ${n} ta rasm tayyor${extra}. Yuklab olish uchun rasmni bosing.`);
+    }
+  }
+
+  async function send(mode){
+    const btns = [$('send-photo'), $('send-doc')];
+    btns.forEach(b => b.disabled = true);
+    try{
+      for(let i = 0; i < pages.length; i += BATCH){
+        const part = pages.slice(i, i + BATCH);
+        setStatus(`Yuborilmoqda: ${Math.min(i + BATCH, pages.length)} / ${pages.length}…`);
+        setProgress(i / pages.length);
+        const form = new FormData();
+        form.append('mode', mode);
+        if(i === 0) form.append('caption', `${baseName} — ${pages.length} ta sahifa`);
+        part.forEach(p => form.append('img', p.blob, p.fileName));
+        const r = await fetch(FN + '?action=send', {method: 'POST', headers: {'x-init-data': initData}, body: form});
+        if(!r.ok) throw new Error(await r.text().catch(() => r.status));
+        if(i + BATCH < pages.length) await new Promise(res => setTimeout(res, 1200)); // stay under Telegram's per-chat limit
+      }
+      setProgress(1);
+      setStatus('✅ Rasmlar chatga yuborildi.');
+      if(tg) setTimeout(() => tg.close(), 1500);
+    }catch(e){
+      console.error(e);
+      setStatus("Yuborib bo'lmadi. Qaytadan urinib ko'ring.", true);
+      btns.forEach(b => b.disabled = false);
+    }
+  }
+  $('send-photo').addEventListener('click', () => send('photo'));
+  $('send-doc').addEventListener('click', () => send('document'));
+
+  $('pick').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    if(!f) return;
+    if(f.size > 50 * 1048576){ $('name').textContent = 'Fayl 50 MB dan katta.'; return; }
+    nameFrom(f.name);
+    convert(new Uint8Array(await f.arrayBuffer()));
+  });
+
+  // Opened from the bot's button: take the PDF the user sent to the bot
+  const fileId = qs.get('f');
+  if(fileId && inTelegram){
+    nameFrom(qs.get('n'));
+    $('pickbox').classList.add('hidden'); $('workbox').classList.remove('hidden');
+    setStatus('PDF yuklanmoqda…');
+    fetch(FN + '?action=pdf&f=' + encodeURIComponent(fileId), {headers: {'x-init-data': initData}})
+      .then(r => r.ok ? r.arrayBuffer() : r.text().then(t => Promise.reject(new Error(t))))
+      .then(buf => convert(new Uint8Array(buf)))
+      .catch(e => setStatus((e && e.message) || "PDF'ni yuklab bo'lmadi.", true));
+  }
+})();
+</script>
+</body>
+</html>
