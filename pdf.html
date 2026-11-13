@@ -65,7 +65,17 @@ label.pick input{display:none}
 </div>
 
 <script src="config.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+/* Older browsers get a transpiled pdf.js (vendor/) plus polyfills */
+(function(){
+  var legacy = false;
+  try { new Function('var a; a ??= 1; a?.b; class A { #x; static {} }'); } catch (e) { legacy = true; }
+  window.__LEGACY__ = legacy;
+  document.write(legacy
+    ? '<script src="vendor/compat.js"><\/script><script src="vendor/pdf.legacy.min.js"><\/script>'
+    : '<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"><\/script>');
+})();
+</script>
 <script>
 (function(){
   const MAX_PAGES = 60, LONG_SIDE = 2000, QUALITY = 0.9, BATCH = 10;
@@ -83,7 +93,8 @@ label.pick input{display:none}
     tg.ready(); tg.expand();
     if(tg.colorScheme) document.documentElement.dataset.theme = tg.colorScheme;
   }
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = window.__LEGACY__ ? 'vendor/pdf.legacy.worker.min.js'
+    : 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
   const setStatus = (msg, err) => { $('status').textContent = msg; $('status').className = 'status' + (err ? ' err' : ''); };
   const setProgress = f => { $('progress').style.width = Math.round(f * 100) + '%'; };

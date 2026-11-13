@@ -56,8 +56,9 @@ const pdfUrl = url => navigator.pdfViewerEnabled === false ? googleUrl(url) : ur
 const COVER_W = 960;
 const LIBS = {
   jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
-  pdfjs: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
-  pdfWorker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+  // older browsers (smart TVs) get a transpiled copy of pdf.js from vendor/
+  pdfjs: window.__LEGACY__ ? 'vendor/pdf.legacy.min.js' : 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+  pdfWorker: window.__LEGACY__ ? 'vendor/pdf.legacy.worker.min.js' : 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
 };
 const loaded = {};
 function loadScript(src){
@@ -227,7 +228,7 @@ function uzKey(str){
     if(c === "'" || c === '"') continue;        // tutuq belgisi (ma'no) doesn't change order
     if(/\s/.test(c)){ key.push(0); continue; }   // shorter word first: "Ali" before "Ali Valiyev"
     if(/\d/.test(c)){ key.push(-100 + Number(c)); continue; } // numbers before letters
-    key.push(UZ_RANK.get(c) ?? 1000 + c.codePointAt(0)); // other letters (c, w, Cyrillic…) after
+    key.push(UZ_RANK.has(c) ? UZ_RANK.get(c) : 1000 + c.codePointAt(0)); // other letters (c, w, Cyrillic…) after
   }
   return key;
 }
@@ -474,13 +475,15 @@ function go(step){
 }
 document.addEventListener('keydown', e => {
   if(!deck || e.target.closest && e.target.closest('input, textarea')) return;
-  if(e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' '){ e.preventDefault(); go(1); }
-  if(e.key === 'ArrowLeft' || e.key === 'PageUp'){ e.preventDefault(); go(-1); }
+  // arrows, page keys and the media / channel keys of TV remotes
+  if(/^(ArrowRight|PageDown| |MediaTrackNext|MediaFastForward|ChannelDown)$/.test(e.key)){ e.preventDefault(); go(1); }
+  if(/^(ArrowLeft|PageUp|MediaTrackPrevious|MediaRewind|ChannelUp)$/.test(e.key)){ e.preventDefault(); go(-1); }
 });
 let resizeT = null;
 const redraw = () => { clearTimeout(resizeT); resizeT = setTimeout(drawSlide, 150); };
 window.addEventListener('resize', redraw);
 document.addEventListener('fullscreenchange', redraw);
+document.addEventListener('webkitfullscreenchange', redraw);
 function currentView(){
   const m = location.hash.match(/^#korish\/([\w-]+)\/(pdf|pptx|html)$/);
   return m ? {id: m[1], kind: m[2]} : null;
@@ -505,8 +508,27 @@ function refresh(){
   const a = document.activeElement;
   const typing = a && a.closest && a.closest('#up, #login-form');
   if(typing || formState.busy){ renderAuth(); return; }
+  // remember what has keyboard / TV-remote focus, so a redraw doesn't lose it
+  const key = a && a !== document.body && app.contains(a) ? (a.getAttribute('href') || a.id) : null;
   const y = window.scrollY; route(); window.scrollTo(0, y);
+  const again = !autoFocused && key && (document.getElementById(key) || app.querySelector('[href="' + CSS.escape(key) + '"]'));
+  if(again) again.focus({preventScroll: true}); else tvFocus(autoFocused);
 }
+const IS_TV = document.documentElement.classList.contains('tv');
+// On a TV the remote needs something focused to start from: the slides, the first topic or card.
+// autoFocused: the focus was placed by us, not by the user, so a redraw may move it again.
+let autoFocused = false;
+const TV_START = ['#viewer.deck', '.chips .chip', '.grid .card', '.pres .thumb', '.pres .files a', '#app a, #app button'];
+function tvFocus(force){
+  if(!IS_TV) return;
+  const a = document.activeElement;
+  if(!force && a && a !== document.body && (app.contains(a) || a === q)) return;
+  for(const sel of TV_START){
+    const el = app.querySelector(sel);
+    if(el){ el.focus(); autoFocused = true; return; }
+  }
+}
+document.addEventListener('keydown', () => { autoFocused = false; }, true);
 
 async function loadItems(){
   const { data, error } = await sb.from('presentations')
@@ -690,7 +712,7 @@ app.addEventListener('change', e => {
 });
 
 q.addEventListener('input', () => { if(location.hash) history.replaceState(null,'',location.pathname); home(); });
-window.addEventListener('hashchange', () => { if(!formState.busy) formState = {msg:'', err:false, busy:false}; route(); window.scrollTo(0,0); });
+window.addEventListener('hashchange', () => { if(!formState.busy) formState = {msg:'', err:false, busy:false}; route(); window.scrollTo(0,0); tvFocus(); });
 app.addEventListener('click', async e => {
   const b = e.target.closest('[data-topic]');
   if(!b) return;
@@ -714,7 +736,7 @@ authEl.addEventListener('click', async e => {
   const configured = cfg.supabaseUrl && cfg.supabaseAnonKey && !/YOUR-/.test(cfg.supabaseUrl + cfg.supabaseAnonKey);
   if(!configured || !window.supabase){ dbState = 'unconfigured'; return route(); }
   sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
-  route();
+  route(); tvFocus();
   sb.auth.onAuthStateChange((_event, session) => {
     const next = session ? session.user : null;
     if((next && next.id) === (user && user.id)) return;

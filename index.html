@@ -30,7 +30,8 @@
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.55}
 a{color:inherit}
-:focus-visible{outline:3px solid var(--accent);outline-offset:3px;border-radius:8px}
+a:focus,button:focus,select:focus,input:focus,[tabindex]:focus{outline:3px solid var(--accent);outline-offset:3px}
+:focus:not(:focus-visible){outline:none} /* modern browsers: no ring after a mouse click */
 .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
 header.top{background:var(--surface);border-bottom:1px solid var(--line)}
 .top .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:16px;padding-bottom:16px;flex-wrap:wrap}
@@ -38,7 +39,7 @@ header.top{background:var(--surface);border-bottom:1px solid var(--line)}
 .brand span{color:var(--accent)}
 .search{flex:1 1 240px;max-width:360px}
 .search input{width:100%;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:inherit}
-h1{font-family:var(--font-display);font-weight:800;font-size:clamp(28px,5vw,44px);line-height:1.1;margin:40px 0 8px;text-wrap:balance;letter-spacing:-.02em}
+h1{font-family:var(--font-display);font-weight:800;font-size:40px;font-size:clamp(28px,5vw,44px);line-height:1.1;margin:40px 0 8px;text-wrap:balance;letter-spacing:-.02em}
 h2{font-family:var(--font-display);font-size:22px;margin:0 0 16px}
 .lead{color:var(--muted);margin:0 0 28px;max-width:60ch}
 .note{padding:14px 18px;border-radius:12px;background:var(--tint);color:var(--ink);margin:24px 0 0}
@@ -63,6 +64,7 @@ h2{font-family:var(--font-display);font-size:22px;margin:0 0 16px}
 .frame{position:relative;width:100%;aspect-ratio:16/10;max-height:80vh;min-height:320px;background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden;margin-bottom:56px}
 .frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
 .frame:fullscreen{border-radius:0;max-height:none;border:0}
+.frame:-webkit-full-screen{border-radius:0;max-height:none;border:0;width:100%;height:100%}
 @media (max-width:600px){.frame:not(.deck){aspect-ratio:4/3}}
 .html-frame{background:#fff}
 .html-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff}
@@ -72,10 +74,11 @@ h2{font-family:var(--font-display);font-size:22px;margin:0 0 16px}
 .deck.loading::after{content:"Slaydlar yuklanmoqda…";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#5a6e80}
 .deck .nav{position:absolute;top:0;bottom:0;width:22%;border:0;background:transparent;color:transparent;font-size:44px;cursor:pointer}
 .deck .prev{left:0}.deck .next{right:0}
-.deck .nav:hover:not([disabled]),.deck .nav:focus-visible{color:rgba(15,34,51,.55)}
+.deck .nav:hover:not([disabled]),.deck .nav:focus{color:rgba(15,34,51,.55)}
 .deck .nav[disabled]{cursor:default}
 .deck .counter{position:absolute;right:10px;bottom:10px;padding:3px 10px;border-radius:99px;background:rgba(15,34,51,.7);color:#fff;font-size:13px;font-variant-numeric:tabular-nums}
 .deck:fullscreen{background:#000}
+.deck:-webkit-full-screen{background:#000}
 .pres .thumb{display:block;text-decoration:none;margin:-20px -20px 10px;aspect-ratio:16/9;background:var(--tint);border-bottom:1px solid var(--line);border-radius:16px 16px 0 0;overflow:hidden}
 .pres .thumb img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .2s}
 .pres .thumb:hover img{transform:scale(1.03)}
@@ -88,7 +91,7 @@ h2{font-family:var(--font-display);font-size:22px;margin:0 0 16px}
 .sortbar{display:inline-flex;align-items:center;gap:10px;color:var(--muted);font-size:15px;font-weight:600}
 .sortbar select{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:inherit;font-weight:500;cursor:pointer}
 .topics{padding:8px 0 24px}
-h2.sec{font-family:var(--font-display);font-weight:800;font-size:clamp(24px,4vw,32px);letter-spacing:-.01em;margin:8px 0 14px}
+h2.sec{font-family:var(--font-display);font-weight:800;font-size:28px;font-size:clamp(24px,4vw,32px);letter-spacing:-.01em;margin:8px 0 14px}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:99px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-weight:600;font-size:15px;text-decoration:none}
 .chip span{color:var(--muted);font-weight:500;font-variant-numeric:tabular-nums}
@@ -115,6 +118,40 @@ h2.sec{font-family:var(--font-display);font-weight:800;font-size:clamp(24px,4vw,
 .login input{padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:inherit;font-weight:400}
 footer{border-top:1px solid var(--line);color:var(--muted);font-size:14px;padding:20px 0}
 @media (prefers-reduced-motion:reduce){.card{transition:none}.card:hover{transform:none}}
+/* ---- Older browsers (many smart TVs run Chromium 63–87) ---- */
+.grid,.list{grid-gap:16px}.upload,.login{grid-gap:16px} /* Chrome < 66 knows only grid-gap */
+@supports not (aspect-ratio:1/1){
+  .pres .thumb{position:relative;height:0;padding-top:56.25%}
+  .pres .thumb img,.pres .thumb .ph{position:absolute;top:0;left:0;width:100%;height:100%}
+  .frame{height:62vh}
+  .deck{height:62vh}
+  .frame iframe,.html-frame iframe,.html-frame.loading::after,.deck.loading::after{top:0;left:0;right:0;bottom:0}
+}
+/* flex "gap" arrived in Chrome 84; html gets .no-flexgap when it is missing */
+.no-flexgap .files>*,.no-flexgap .viewbar>*,.no-flexgap .chips>*,.no-flexgap .admin-row>*{margin:0 8px 8px 0}
+.no-flexgap .top .wrap>*{margin:4px 8px}
+.no-flexgap .card>*+*{margin-top:14px}
+.no-flexgap .pres>*+*,.no-flexgap .field>*+*{margin-top:6px}
+.no-flexgap .authbar>*+*,.no-flexgap .sortbar>*+*{margin-left:10px}
+.no-flexgap .upload .actions>*+*,.no-flexgap .listhead>*+*{margin-left:16px}
+.no-flexgap .chip>*+*,.no-flexgap .back>*+*{margin-left:6px}
+
+/* ---- TV mode: html gets .tv on smart-TV browsers (or with ?tv=1) ---- */
+.tv body{font-size:20px}
+.tv .wrap{max-width:1500px}
+.tv h1{font-size:56px}
+.tv .lead{font-size:22px}
+.tv .grid{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+.tv .list{grid-template-columns:repeat(auto-fill,minmax(360px,1fr))}
+.tv .card .num{font-size:60px}
+.tv .card .name,.tv .pres h3{font-size:24px}
+.tv .btn{font-size:19px;padding:12px 20px}
+.tv .chip{font-size:19px;padding:8px 18px}
+.tv a:focus,.tv button:focus,.tv select:focus,.tv input:focus,.tv [tabindex]:focus{outline:5px solid var(--accent);outline-offset:4px}
+.tv .card:focus{transform:scale(1.05);border-color:var(--accent)}
+.tv .pres .thumb:focus img{transform:scale(1.05)}
+.tv .deck .nav{color:rgba(15,34,51,.3)} /* no mouse hover on a TV: always show the arrows */
+.tv .frame{max-height:72vh}
 </style>
 </head>
 <body>
@@ -128,7 +165,25 @@ footer{border-top:1px solid var(--line);color:var(--muted);font-size:14px;paddin
 <main class="wrap" id="app"></main>
 <footer><div class="wrap">101–110 guruhlar o'quvchilarining taqdimotlari</div></footer>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.93.3/dist/umd/supabase.js"></script>
+<script>
+/* Older browsers (many smart TVs) get transpiled libraries plus polyfills; modern ones the CDN build. */
+(function(){
+  var d = document.documentElement, legacy = false;
+  try { new Function('var a; a ??= 1; a?.b; class A { #x; static {} }'); } catch (e) { legacy = true; }
+  if (/[?&]legacy=1/.test(location.search)) legacy = true; // for testing
+  window.__LEGACY__ = legacy;
+  var tv = /SMART-?TV|SmartTV|Tizen|Web0S|webOS|NetCast|HbbTV|BRAVIA|Android ?TV|GoogleTV|\bAFT[A-Z]|CrKey|VIDAA|Opera TV|Viera/i.test(navigator.userAgent);
+  try { if (/[?&]tv=1/.test(location.search)) localStorage.setItem('tv', '1'); if (/[?&]tv=0/.test(location.search)) localStorage.removeItem('tv'); tv = tv || localStorage.getItem('tv') === '1'; } catch (e) {}
+  if (tv) d.className += ' tv';
+  var f = document.createElement('div');
+  f.style.cssText = 'display:flex;flex-direction:column;row-gap:1px;position:absolute';
+  f.appendChild(document.createElement('div')); f.appendChild(document.createElement('div'));
+  d.appendChild(f); if (f.scrollHeight !== 1) d.className += ' no-flexgap'; d.removeChild(f);
+  document.write(legacy
+    ? '<script src="vendor/compat.js"><\/script><script src="vendor/supabase.legacy.js"><\/script>'
+    : '<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.93.3/dist/umd/supabase.js"><\/script>');
+})();
+</script>
 <script src="config.js"></script>
 <script src="app.js"></script>
 </body>

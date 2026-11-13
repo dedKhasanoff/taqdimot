@@ -18,6 +18,7 @@
 | `supabase/schema.sql` | Jadval, admin ro'yxati, ruxsat qoidalari, fayl ombori |
 | `supabase/02_cover.sql` | Muqova rasmlari uchun yangilanish (eski bazalar uchun) |
 | `supabase/03_topic.sql` | Mavzular uchun yangilanish (eski bazalar uchun) |
+| `vendor/` | Eski brauzerlar (smart TV) uchun moslashtirilgan kutubxonalar, qarang `vendor/README.md` |
 | `pdf.html` | Telegram Mini App: PDF'ni JPEG rasmlarga aylantiradi |
 | `netlify.toml` | Netlify sozlamasi |
 | `supabase/functions/telegram-bot/index.ts` | Telegram bot (Supabase Edge Function) |
@@ -69,6 +70,11 @@ Botda: `/start` → guruh → mavzu → nom → ism → PDF/PPTX/HTML fayl (20 M
 **E'lon:** admin (`ADMIN_CHAT_ID`) botga `/elon` yozadi, keyin e'lonni (matn, rasm, video) yuboradi; bot qanday ko'rinishini ko'rsatadi va "Yuborish" bosilgach botdan foydalangan hammaga yuboradi, oxirida hisobot beradi.
 
 Faqat PDF yuborilgan taqdimotlarning muqova rasmi admin saytga kirganda avtomatik yaratiladi.
+
+## Televizor va eski brauzerlar
+- Brauzer eski bo'lsa (taxminan Chrome 64–93: 2019–2021 yillardagi ko'p Samsung/LG TV), sayt `vendor/` dagi moslashtirilgan kutubxonalarni avtomatik yuklaydi; yangi brauzerlar CDN versiyasini oladi.
+- Eski CSS uchun zaxira qoidalar bor (aspect-ratio, flex gap, inset, :focus-visible, :fullscreen).
+- Smart TV aniqlansa (yoki `?tv=1`), yozuvlar va tugmalar kattalashadi, pult bilan tanlangan element qalin ramka bilan ko'rinadi, sahifa ochilganda birinchi element avtomatik tanlanadi. Slaydlar pultning ←/→, kanal va media tugmalari bilan varaqlanadi.
 
 ## Ma'lumot modeli
 Jadval `presentations`:
